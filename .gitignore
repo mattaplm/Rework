@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.xlsx
+*.xls
+logs/
+.pytest_cache/
+backups/
+cookies.txt
+flask.log
+.claude/
+
+# devdb/ -- no-admin-rights local Postgres stand-in (PGlite), see CLAUDE.md
+devdb/node_modules/
+devdb/data/
+devdb/pglite.log

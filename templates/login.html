@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Log in · Doors Rework{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <form class="card auth-card" method="post">
+    <h2>Log in</h2>
+    {% if error %}<p class="auth-error">{{ error }}</p>{% endif %}
+    <div class="field">
+      <label for="username">Username</label>
+      <select id="username" name="username" autofocus required>
+        <option value="" disabled {% if not selected_username %}selected{% endif %}>Select your username…</option>
+        {% for u in usernames %}
+        <option value="{{ u }}" {% if u == selected_username %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="password">PIN</label>
+      <input type="password" id="password" name="password" inputmode="numeric" pattern="\d{4}" maxlength="4" autocomplete="off">
+      <p class="hint">Leave blank if you're a viewer account with no PIN set.</p>
+    </div>
+    <button type="submit" class="btn-primary">Log in</button>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  // Auto-submit the moment a valid 4-digit PIN is entered -- requested
+  // 2026-10-22, "shouldn't need to click log in". Viewer accounts with no
+  // PIN still click the button themselves, since an empty field has no
+  // unambiguous "done typing" moment to trigger on.
+  var form = document.querySelector(".auth-card");
+  var username = document.getElementById("username");
+  var password = document.getElementById("password");
+  password.addEventListener("input", function () {
+    if (username.value && /^\d{4}$/.test(password.value)) form.submit();
+  });
+})();
+</script>
+{% endblock %}

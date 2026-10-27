@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not allowed · Doors Rework{% endblock %}
+{% block content %}
+<div class="card" style="max-width:480px;margin:40px auto;text-align:center;">
+  <h2>Not allowed</h2>
+  <p class="hint">{{ message }}</p>
+  <p><a href="{{ url_for('rework.list_page') }}">Back to the log</a></p>
+</div>
+{% endblock %}

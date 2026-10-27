@@ -1,0 +1,848 @@
+{% extends "base.html" %}
+{% block title %}Admin · Doors Rework{% endblock %}
+{% block content %}
+
+<div class="page-header"><h1>⚙️ Admin</h1></div>
+
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="erp">SQL Connection</button>
+  <button class="tab-btn" data-tab="scheduled_tasks">Scheduled Tasks</button>
+  <button class="tab-btn" data-tab="reasons">Reasons</button>
+  <button class="tab-btn" data-tab="door_codes">Door Codes</button>
+  <button class="tab-btn" data-tab="work_centres">Work Centres</button>
+  <button class="tab-btn" data-tab="colours">Colours</button>
+  <button class="tab-btn" data-tab="items">Items</button>
+  <button class="tab-btn" data-tab="users">Users</button>
+  <button class="tab-btn" data-tab="audit_log">Audit Log</button>
+</div>
+
+<!-- ───────────────────────── SQL / ERP Connection ───────────────────────── -->
+<div class="tab-panel active" data-panel="erp">
+  <div class="card">
+    <h2>SQL Server Connection</h2>
+    <div class="conn-banner" id="connBanner">Not tested yet</div>
+
+    <table class="admin-table" style="margin-top:16px;">
+      <thead><tr><th>Dataset</th><th>Synced</th><th>Total</th><th>Last synced</th></tr></thead>
+      <tbody>
+        <tr><td>Items</td><td>{{ erp_status.items_synced }}</td><td>{{ erp_status.items_total }}</td><td>{{ erp_status.items_last_synced or "never" }}</td></tr>
+        <tr><td>Colours</td><td>{{ erp_status.colours_synced }}</td><td>—</td><td>{{ erp_status.colours_last_synced or "never" }}</td></tr>
+        <tr><td>Orders (currently open)</td><td>{{ erp_status.orders_synced }}</td><td>—</td><td>{{ erp_status.orders_last_synced or "never" }}</td></tr>
+        <tr><td>Jobs with cached materials</td><td>{{ erp_status.order_jobs_synced }}</td><td>—</td><td>—</td></tr>
+        <tr><td>Scrap transactions (reconciliation)</td><td>{{ erp_status.scrap_txns_synced }}</td><td>—</td><td>{{ erp_status.scrap_txns_last_synced or "never" }}</td></tr>
+      </tbody>
+    </table>
+
+    <div class="btn-row">
+      <button class="btn-pill primary" id="btnTestConn">🔌 Test Connection</button>
+      <button class="btn-pill" id="btnSyncItems">📦 Sync Items</button>
+      <button class="btn-pill" id="btnSyncColours">🎨 Sync Colours</button>
+      <button class="btn-pill" id="btnSyncOrders">🧾 Sync Orders Now</button>
+      <button class="btn-pill" id="btnSyncScrap">♻️ Sync Scrap Transactions</button>
+    </div>
+
+    <p class="hint" style="margin-top:16px;">
+      The entry form's SO lookup reads the local Orders cache above, never SyteLine live -- see Scheduled Tasks for when it
+      refreshes automatically, or use the buttons above to run any sync right now.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Test data</h2>
+    <p class="hint">
+      A fake Sales Order for safely testing the Doors and Turret entry forms (new entry, reopen/edit, Scrap write-off) without
+      risking a real order number. Type SO number <strong>{{ test_so_number }}</strong> (exactly as shown, lowercase) on either
+      entry form to auto-fill Job <strong>{{ test_job_number }}</strong>, colour <strong>"{{ test_colour_name }}"</strong>
+      (pink, so it's obvious in any list), and door type <strong>Plasma</strong> --
+      BOM includes 2 Sheet items and 2 real Plasma door parts, so both Material/Product Code pickers have real options.
+    </p>
+    <div class="conn-banner {{ 'ok' if test_data_enabled else '' }}" id="testDataBanner">
+      {{ "✅ Enabled -- use SO " + test_so_number + " on the entry forms" if test_data_enabled else "Disabled" }}
+    </div>
+    <div class="btn-row" style="margin-top:12px;">
+      <button class="btn-pill primary" id="btnEnableTestData" {{ "disabled" if test_data_enabled else "" }}>🧪 Enable test data</button>
+      <button class="btn-pill" id="btnDisableTestData" {{ "disabled" if not test_data_enabled else "" }}>🗑️ Disable &amp; clean up</button>
+    </div>
+    <p class="hint" style="margin-top:12px;">
+      Disabling deletes the fake order/colour <strong>and any rework/turret entries you logged against it</strong> -- a full
+      reset, not a soft hide, so nothing fake lingers in real history once you're done testing.
+    </p>
+  </div>
+</div>
+
+<!-- ───────────────────────── Scheduled Tasks ───────────────────────── -->
+<div class="tab-panel" data-panel="scheduled_tasks">
+  <div class="card">
+    <h2>Scheduled Tasks</h2>
+    <p class="hint">Run these SQL Server syncs automatically at a set time, instead of (or as well as) the manual buttons on SQL Connection. Times are the server's local clock; a task runs once, the first time the server sees its clock reach or pass that time on the scheduled day.</p>
+
+    <table class="admin-table schedule-table" style="margin-top:14px;">
+      <thead>
+        <tr><th>Task</th><th>Frequency</th><th>Day</th><th>Time</th><th>Enabled</th><th>Last run</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr data-task="erp">
+          <td>Doors — Items &amp; Colours Sync</td>
+          <td>
+            <select class="sched-frequency">
+              <option value="daily" {% if erp_schedule.frequency == "daily" %}selected{% endif %}>Daily</option>
+              <option value="weekly" {% if erp_schedule.frequency == "weekly" %}selected{% endif %}>Weekly</option>
+              <option value="monthly" {% if erp_schedule.frequency == "monthly" %}selected{% endif %}>Monthly</option>
+            </select>
+          </td>
+          <td>
+            <select class="sched-day" {% if erp_schedule.frequency != "weekly" %}disabled{% endif %}>
+              <option value="0" {% if erp_schedule.day_of_week == 0 %}selected{% endif %}>Monday</option>
+              <option value="1" {% if erp_schedule.day_of_week == 1 %}selected{% endif %}>Tuesday</option>
+              <option value="2" {% if erp_schedule.day_of_week == 2 %}selected{% endif %}>Wednesday</option>
+              <option value="3" {% if erp_schedule.day_of_week == 3 %}selected{% endif %}>Thursday</option>
+              <option value="4" {% if erp_schedule.day_of_week == 4 %}selected{% endif %}>Friday</option>
+              <option value="5" {% if erp_schedule.day_of_week == 5 %}selected{% endif %}>Saturday</option>
+              <option value="6" {% if erp_schedule.day_of_week == 6 %}selected{% endif %}>Sunday</option>
+            </select>
+          </td>
+          <td><input type="time" class="sched-time" value="{{ erp_schedule.time }}"></td>
+          <td><input type="checkbox" class="sched-enabled" {% if erp_schedule.enabled %}checked{% endif %}></td>
+          <td class="sched-last-run">{{ erp_status.items_last_synced or erp_status.colours_last_synced or "never" }}</td>
+          <td><button type="button" class="btn-sm accent sched-save" data-endpoint="/api/admin/erp/schedule">Save</button></td>
+        </tr>
+        <tr data-task="orders">
+          <td>Doors — Orders Sync</td>
+          <td>
+            <select class="sched-frequency">
+              <option value="daily" {% if orders_schedule.frequency == "daily" %}selected{% endif %}>Daily</option>
+              <option value="weekly" {% if orders_schedule.frequency == "weekly" %}selected{% endif %}>Weekly</option>
+            </select>
+          </td>
+          <td>
+            <select class="sched-day" {% if orders_schedule.frequency != "weekly" %}disabled{% endif %}>
+              <option value="0" {% if orders_schedule.day_of_week == 0 %}selected{% endif %}>Monday</option>
+              <option value="1" {% if orders_schedule.day_of_week == 1 %}selected{% endif %}>Tuesday</option>
+              <option value="2" {% if orders_schedule.day_of_week == 2 %}selected{% endif %}>Wednesday</option>
+              <option value="3" {% if orders_schedule.day_of_week == 3 %}selected{% endif %}>Thursday</option>
+              <option value="4" {% if orders_schedule.day_of_week == 4 %}selected{% endif %}>Friday</option>
+              <option value="5" {% if orders_schedule.day_of_week == 5 %}selected{% endif %}>Saturday</option>
+              <option value="6" {% if orders_schedule.day_of_week == 6 %}selected{% endif %}>Sunday</option>
+            </select>
+          </td>
+          <td><input type="time" class="sched-time" value="{{ orders_schedule.time }}"></td>
+          <td><input type="checkbox" class="sched-enabled" {% if orders_schedule.enabled %}checked{% endif %}></td>
+          <td class="sched-last-run">{{ erp_status.orders_last_synced or "never" }}</td>
+          <td><button type="button" class="btn-sm accent sched-save" data-endpoint="/api/admin/erp/orders-schedule">Save</button></td>
+        </tr>
+        <tr data-task="scrap">
+          <td>Doors — Scrap Transactions Sync</td>
+          <td>
+            <select class="sched-frequency">
+              <option value="daily" {% if scrap_schedule.frequency == "daily" %}selected{% endif %}>Daily</option>
+              <option value="weekly" {% if scrap_schedule.frequency == "weekly" %}selected{% endif %}>Weekly</option>
+            </select>
+          </td>
+          <td>
+            <select class="sched-day" {% if scrap_schedule.frequency != "weekly" %}disabled{% endif %}>
+              <option value="0" {% if scrap_schedule.day_of_week == 0 %}selected{% endif %}>Monday</option>
+              <option value="1" {% if scrap_schedule.day_of_week == 1 %}selected{% endif %}>Tuesday</option>
+              <option value="2" {% if scrap_schedule.day_of_week == 2 %}selected{% endif %}>Wednesday</option>
+              <option value="3" {% if scrap_schedule.day_of_week == 3 %}selected{% endif %}>Thursday</option>
+              <option value="4" {% if scrap_schedule.day_of_week == 4 %}selected{% endif %}>Friday</option>
+              <option value="5" {% if scrap_schedule.day_of_week == 5 %}selected{% endif %}>Saturday</option>
+              <option value="6" {% if scrap_schedule.day_of_week == 6 %}selected{% endif %}>Sunday</option>
+            </select>
+          </td>
+          <td><input type="time" class="sched-time" value="{{ scrap_schedule.time }}"></td>
+          <td><input type="checkbox" class="sched-enabled" {% if scrap_schedule.enabled %}checked{% endif %}></td>
+          <td class="sched-last-run">{{ erp_status.scrap_txns_last_synced or "never" }}</td>
+          <td><button type="button" class="btn-sm accent sched-save" data-endpoint="/api/admin/erp/scrap-schedule">Save</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="hint" style="margin-top:12px;">Checked every 30 minutes in the background, so a scheduled time can run up to ~30 minutes late. Nothing here ever removes cached data -- a sync only adds/refreshes.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────── Reasons ───────────────────────── -->
+<div class="tab-panel" data-panel="reasons">
+  <div class="card">
+    <h2>Rework Reasons</h2>
+    <table class="admin-table">
+      <thead><tr><th>Reason</th><th>Code</th><th>Source</th><th>Fault category</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for r in reasons %}
+        <tr class="{% if not r.active %}inactive-row{% endif %}" data-id="{{ r.id }}" data-name="{{ r.reason }}">
+          <td>
+            <span class="view-val">{{ r.reason }}</span>
+            <input type="text" class="edit-val reason-field" value="{{ r.reason }}">
+          </td>
+          <td>
+            <span class="view-val">{{ r.code or "" }}</span>
+            <input type="text" class="edit-val code-field" value="{{ r.code or '' }}">
+          </td>
+          <td>
+            <span class="view-val">{{ r.source }}</span>
+            <input type="text" class="edit-val source-field" value="{{ r.source }}">
+          </td>
+          <td>
+            <span class="view-val">{{ r.fault_category or "" }}</span>
+            <input type="text" class="edit-val fault-field" value="{{ r.fault_category or '' }}">
+          </td>
+          <td>{% if r.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td class="col-nowrap">
+            <span class="view-val actions-row">
+              <button class="btn-sm edit-reason" type="button">Edit</button>
+              <button class="btn-sm toggle-active" data-table="reasons" data-active="{{ r.active|lower }}">{{ "Deactivate" if r.active else "Activate" }}</button>
+            </span>
+            <span class="edit-val actions-row">
+              <button class="btn-sm accent save-reason" type="button">Save</button>
+              <button class="btn-sm cancel-reason" type="button">Cancel</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form class="inline-form" id="formNewReason">
+      <input type="text" name="reason" placeholder="Reason name" required>
+      <input type="text" name="code" placeholder="Code">
+      <input type="text" name="source" placeholder="Source (e.g. Assembly)" required>
+      <input type="text" name="fault_category" placeholder="Fault category">
+      <button type="submit" class="btn-sm accent">Add reason</button>
+    </form>
+    <p class="hint" style="margin-top:10px;">Editing a reason's name also updates every past Doors/Turret entry that used the old wording — it's a rename everywhere, not a new option alongside the old one.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────── Work Centres ───────────────────────── -->
+{% for table, label, items in [("work_centres", "Work Centre", work_centres)] %}
+<div class="tab-panel" data-panel="{{ table }}">
+  <div class="card">
+    <h2>{{ label }}s</h2>
+    <table class="admin-table">
+      <thead><tr><th>Name</th><th>Sort order</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for i in items %}
+        <tr class="{% if not i.active %}inactive-row{% endif %}" data-name="{{ i.name }}">
+          <td>
+            <span class="view-val">{{ i.name }}</span>
+            <input type="text" class="edit-val name-field rate-input" value="{{ i.name }}">
+          </td>
+          <td>
+            <span class="view-val">{{ i.sort_order }}</span>
+            <input type="text" class="edit-val sort-order-field rate-input" value="{{ i.sort_order }}" style="width:60px;">
+          </td>
+          <td>{% if i.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td>
+            <span class="view-val actions-row">
+              <button class="btn-sm edit-named" type="button">Edit</button>
+              <button class="btn-sm toggle-active" data-table="{{ table }}" data-active="{{ i.active|lower }}">{{ "Deactivate" if i.active else "Activate" }}</button>
+            </span>
+            <span class="edit-val actions-row">
+              <button class="btn-sm accent save-named" data-table="{{ table }}">Save</button>
+              <button class="btn-sm cancel-named" type="button">Cancel</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form class="inline-form" data-table="{{ table }}" data-form="named">
+      <input type="text" name="name" placeholder="New {{ label|lower }} name" required>
+      <button type="submit" class="btn-sm accent">Add {{ label|lower }}</button>
+    </form>
+    <p class="hint" style="margin-top:10px;">Renaming also updates every past entry that used the old name — it's a rename everywhere, not a new option alongside the old one. Sort order controls the list here and in the entry form's dropdown (lowest first); ties break alphabetically.</p>
+  </div>
+</div>
+{% endfor %}
+
+<!-- ───────────────────────── Door Codes ───────────────────────── -->
+<div class="tab-panel" data-panel="door_codes">
+  <div class="card">
+    <h2>Door Codes <span class="optional">code comes from SyteLine; Family Name is this app's Door Type list; Description is extra detail, both typed in by hand</span></h2>
+    <table class="admin-table" id="doorCodeTable">
+      <thead><tr><th style="width:110px;">CPQ code</th><th>Family name</th><th>Description <span class="optional">optional</span></th><th>Status</th><th></th></tr></thead>
+      <tbody id="doorCodeRows">
+        {% for c in cpq_door_codes %}
+        <tr class="{% if not c.active %}inactive-row{% endif %}" data-code="{{ c.cpq_code }}" data-name="{{ c.cpq_code }}">
+          <td>
+            <span class="view-val">{{ c.cpq_code }}</span>
+            <input type="text" class="edit-val rate-input" data-field="code" value="{{ c.cpq_code }}" style="width:90px;">
+          </td>
+          <td>
+            <span class="view-val">{{ c.family_name or "" }}</span>
+            <input type="text" class="edit-val rate-input" data-field="family_name" value="{{ c.family_name or '' }}" style="width:100%; max-width:200px;">
+          </td>
+          <td>
+            <span class="view-val">{{ c.description or "" }}</span>
+            <input type="text" class="edit-val rate-input" data-field="description" value="{{ c.description or '' }}" style="width:100%; max-width:280px;">
+          </td>
+          <td>{% if c.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td>
+            <span class="view-val actions-row">
+              <button class="btn-sm edit-door-code" type="button">Edit</button>
+              <button class="btn-sm toggle-active" data-table="door_codes" data-active="{{ c.active|lower }}">{{ "Deactivate" if c.active else "Activate" }}</button>
+            </span>
+            <span class="edit-val actions-row">
+              <button class="btn-sm accent save-door-code" type="button">Save</button>
+              <button class="btn-sm cancel-door-code" type="button">Cancel</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
+      <button class="btn-sm" id="btnAddDoorCodeRow">+ Add row</button>
+      <button class="btn-sm" id="btnCheckUnmapped">Check SyteLine for new codes (~15-20s)</button>
+    </div>
+    <p class="hint" id="unmappedCodesResult" style="margin-top:10px;"></p>
+  </div>
+</div>
+
+<!-- ───────────────────────── Colours ───────────────────────── -->
+<div class="tab-panel" data-panel="colours">
+  <div class="card">
+    <h2>Colours <span class="optional">ERP-owned — synced from SyteLine, can't be added here</span></h2>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+      <input type="text" id="colourSearch" placeholder="Search colour, code or Dulux code…" style="max-width:280px;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:.82rem; color:var(--text-muted);">
+        <input type="checkbox" id="colourHideBlank"> Hide colours with no swatch
+      </label>
+      <span class="hint" id="colourCount"></span>
+    </div>
+    <div class="table-scroll">
+      <table class="admin-table" id="colourTable">
+        <thead>
+          <tr>
+            <th></th>
+            <th data-key="name" class="sortable">Colour</th>
+            <th data-key="code" class="sortable">Code</th>
+            <th data-key="dulux_code" class="sortable">Dulux code</th>
+            <th data-key="base_colour_description" class="sortable">Base colour</th>
+            <th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="colourRows">
+        {% for c in colours %}
+        <tr class="{% if not c.active %}inactive-row{% endif %}"
+            data-name="{{ c.name }}" data-code="{{ c.code or '' }}" data-dulux="{{ c.dulux_code or '' }}"
+            data-base="{{ c.base_colour_description or '' }}" data-rgb="{{ c.rgb or '' }}">
+          <td class="colour-swatch-cell"></td>
+          <td>{{ c.name }}</td>
+          <td>{{ c.code or "" }}</td>
+          <td>{{ c.dulux_code or "" }}</td>
+          <td>{{ c.base_colour_description or "" }}</td>
+          <td>{% if c.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td><button class="btn-sm toggle-active" data-table="colours" data-active="{{ c.active|lower }}">{{ "Deactivate" if c.active else "Activate" }}</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- ───────────────────────── Items ───────────────────────── -->
+<div class="tab-panel" data-panel="items">
+  <div class="card">
+    <h2>Items <span class="optional">rule is local; everything else is ERP-owned</span></h2>
+    <input type="text" id="itemSearch" placeholder="Search part number or description…" style="max-width:320px; margin-bottom:12px;">
+    <div class="table-scroll">
+      <table class="admin-table" id="itemTable">
+        <thead>
+          <tr><th>Part number</th><th>Description</th><th>Std cost</th><th>Rule</th><th></th></tr>
+        </thead>
+        <tbody id="itemRows"></tbody>
+      </table>
+    </div>
+    <p class="hint">Type at least 2 characters to search — the item master has 5,000+ rows.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────── Users ───────────────────────── -->
+<div class="tab-panel" data-panel="users">
+  <div class="card">
+    <h2>Users</h2>
+    <table class="admin-table">
+      <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr class="{% if not u.active %}inactive-row{% endif %}" data-id="{{ u.id }}">
+          <td>{{ u.username }}</td>
+          <td>
+            <select class="user-role" data-id="{{ u.id }}" {% if u.id == current_user.id %}disabled{% endif %}>
+              {% for role in ["viewer", "operator", "admin"] %}
+              <option value="{{ role }}" {% if u.role == role %}selected{% endif %}>{{ role }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>{% if u.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td>{{ u.last_login_at or "never" }}</td>
+          <td>
+            <span class="actions-row">
+              {% if u.id != current_user.id %}
+              <button class="btn-sm user-toggle-active" data-id="{{ u.id }}" data-active="{{ u.active|lower }}">{{ "Deactivate" if u.active else "Activate" }}</button>
+              <button class="btn-sm danger user-delete" data-id="{{ u.id }}">Delete</button>
+              {% endif %}
+              <button class="btn-sm user-reset-pw" data-id="{{ u.id }}">Reset password</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form class="inline-form" id="formNewUser">
+      <input type="text" name="username" placeholder="Username" required>
+      <input type="password" name="password" placeholder="4-digit PIN (blank for viewer)" inputmode="numeric" pattern="\d{4}" maxlength="4">
+      <select name="role">
+        <option value="viewer">viewer</option>
+        <option value="operator" selected>operator</option>
+        <option value="admin">admin</option>
+      </select>
+      <button type="submit" class="btn-sm accent">Add user</button>
+    </form>
+  </div>
+</div>
+
+<!-- ───────────────────────── Audit Log ───────────────────────── -->
+<div class="tab-panel" data-panel="audit_log">
+  <div class="card">
+    <h2>Audit Log <span class="optional">most recent {{ audit_log|length }} entries</span></h2>
+    <p class="hint">Every logon, rework/turret entry, and reference-data or user-management change, by username. This is a live feed of `audit_log` -- nothing here can be edited or deleted from the app.</p>
+    {% if audit_log %}
+    <div class="table-scroll" style="margin-top:12px;">
+      <table class="rework-table compact">
+        <thead><tr><th>Time</th><th>Username</th><th>Action</th><th>Entity</th><th>Detail</th></tr></thead>
+        <tbody>
+          {% for a in audit_log %}
+          <tr>
+            <td class="col-nowrap">{{ a.at }}</td>
+            <td class="col-nowrap">{{ a.username }}</td>
+            <td class="col-nowrap">{{ a.action }}</td>
+            <td class="col-nowrap">{{ a.entity_type or "" }}{% if a.entity_id %} #{{ a.entity_id }}{% endif %}</td>
+            <td class="col-wide">{{ a.detail|tojson if a.detail else "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="hint" style="margin-top:12px;">Nothing logged yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── Tabs ──
+  // Selecting a tab stores it in the URL hash, so reloading the page after an
+  // admin action (every add/toggle/sync button below does `location.reload()`
+  // on success) comes back to the same tab instead of always snapping back to
+  // the first one ("SQL Connection") -- that reset-to-the-first-tab was
+  // reported as the page "going to another screen" after adding a mapping.
+  var tabBar = document.getElementById("tabBar");
+  function activateTab(tabKey) {
+    var btn = tabBar.querySelector('.tab-btn[data-tab="' + tabKey + '"]');
+    var panel = document.querySelector('.tab-panel[data-panel="' + tabKey + '"]');
+    if (!btn || !panel) return false;
+    document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.remove("active"); });
+    document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+    btn.classList.add("active");
+    panel.classList.add("active");
+    return true;
+  }
+  tabBar.addEventListener("click", function (e) {
+    var btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    activateTab(btn.dataset.tab);
+    location.hash = btn.dataset.tab;
+  });
+  if (location.hash) activateTab(location.hash.slice(1));
+
+  var toastTimer;
+  function showToast(msg, isError) {
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = "toast"; }, 3000);
+  }
+
+  function post(url, body, method) {
+    return fetch(url, {
+      method: method || "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d.ok, data: d }; }); });
+  }
+
+  // ── SQL / ERP Connection ──
+  function runSyncButton(id, endpoint, busyLabel, onDone) {
+    var btn = document.getElementById(id);
+    var originalLabel = btn.textContent;
+    btn.addEventListener("click", function () {
+      btn.disabled = true; btn.textContent = busyLabel;
+      post(endpoint).then(function (res) {
+        btn.disabled = false; btn.textContent = originalLabel;
+        if (res.ok) { showToast(onDone(res.data)); location.reload(); }
+        else showToast(res.data.error || "Sync failed", true);
+      });
+    });
+  }
+
+  document.getElementById("btnTestConn").addEventListener("click", function () {
+    var banner = document.getElementById("connBanner");
+    post("/api/admin/erp/test").then(function (res) {
+      banner.className = "conn-banner " + (res.data.ok ? "ok" : "error");
+      banner.textContent = res.data.ok ? "✅ Connected" : "❌ " + res.data.message;
+    });
+  });
+  runSyncButton("btnSyncItems", "/api/admin/erp/sync-items", "Syncing…", function (d) { return "Synced " + d.count + " items."; });
+  runSyncButton("btnSyncColours", "/api/admin/erp/sync-colours", "Syncing…", function (d) { return "Synced " + d.count + " colours."; });
+  runSyncButton("btnSyncOrders", "/api/admin/erp/sync-orders", "Syncing…", function (d) { return "Synced " + d.orders + " orders, " + d.materials + " material lines."; });
+  runSyncButton("btnSyncScrap", "/api/admin/erp/sync-scrap", "Syncing…", function (d) { return "Synced " + d.count + " scrap transactions."; });
+
+  // ── Test data ──
+  document.getElementById("btnEnableTestData").addEventListener("click", function () {
+    post("/api/admin/test-data/toggle", { enabled: true }).then(function (res) {
+      if (res.ok) { showToast("Test data enabled."); location.reload(); }
+      else showToast(res.data.error || "Failed", true);
+    });
+  });
+  document.getElementById("btnDisableTestData").addEventListener("click", function () {
+    if (!confirm("This deletes the fake order/colour and any rework/turret entries logged against it. Continue?")) return;
+    post("/api/admin/test-data/toggle", { enabled: false }).then(function (res) {
+      if (res.ok) { showToast("Test data disabled and cleaned up."); location.reload(); }
+      else showToast(res.data.error || "Failed", true);
+    });
+  });
+
+  // ── Scheduled Tasks ──
+  document.querySelectorAll(".schedule-table tbody tr").forEach(function (row) {
+    var freqSel = row.querySelector(".sched-frequency");
+    var daySel = row.querySelector(".sched-day");
+    freqSel.addEventListener("change", function () { daySel.disabled = freqSel.value !== "weekly"; });
+  });
+  document.querySelectorAll(".sched-save").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      var payload = {
+        enabled: row.querySelector(".sched-enabled").checked,
+        frequency: row.querySelector(".sched-frequency").value,
+        time: row.querySelector(".sched-time").value,
+        day_of_week: row.querySelector(".sched-day").value,
+      };
+      post(btn.dataset.endpoint, payload).then(function (res) {
+        showToast(res.ok ? "Schedule saved." : (res.data.error || "Failed"), !res.ok);
+      });
+    });
+  });
+
+  // ── Reasons ──
+  document.getElementById("formNewReason").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var fd = new FormData(e.target);
+    post("/api/admin/reasons", Object.fromEntries(fd)).then(function (res) {
+      if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+    });
+  });
+
+  // ── Reasons: inline edit (read-only row + Edit button, same view-val/
+  //    edit-val pattern as the rest of this page) ──
+  document.querySelectorAll(".edit-reason").forEach(function (btn) {
+    btn.addEventListener("click", function () { btn.closest("tr").classList.add("editing"); });
+  });
+  document.querySelectorAll(".cancel-reason").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      row.querySelectorAll("input.edit-val").forEach(function (input) {
+        var viewVal = input.previousElementSibling;
+        if (viewVal && viewVal.classList.contains("view-val")) input.value = viewVal.textContent;
+      });
+      row.classList.remove("editing");
+    });
+  });
+  document.querySelectorAll(".save-reason").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      var payload = {
+        reason: row.querySelector(".reason-field").value.trim(),
+        code: row.querySelector(".code-field").value.trim(),
+        source: row.querySelector(".source-field").value.trim(),
+        fault_category: row.querySelector(".fault-field").value.trim(),
+      };
+      post("/api/admin/reasons/" + row.dataset.id, payload).then(function (res) {
+        if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+      });
+    });
+  });
+
+  // ── Generic active/inactive toggle (reasons/door types/work centres/colours) ──
+  document.querySelectorAll(".toggle-active").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      var name = row.dataset.name;
+      var table = btn.dataset.table;
+      var nextActive = btn.dataset.active !== "true";
+      var url = table === "reasons"
+        ? "/api/admin/reasons/" + encodeURIComponent(name) + "/active"
+        : table === "colours"
+        ? "/api/admin/colours/" + encodeURIComponent(name) + "/active"
+        : table === "door_codes"
+        ? "/api/admin/door-codes/" + encodeURIComponent(name) + "/active"
+        : "/api/admin/" + table + "/" + encodeURIComponent(name) + "/active";
+      post(url, { active: nextActive }).then(function (res) {
+        if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+      });
+    });
+  });
+
+  // ── Work centres: inline edit (Name + Sort order together, same
+  //    view-val/edit-val/Edit-Save-Cancel pattern as Reasons -- replaces the
+  //    old separate Rename-button/prompt() flow, 2026-10-22) ──
+  document.querySelectorAll(".edit-named").forEach(function (btn) {
+    btn.addEventListener("click", function () { btn.closest("tr").classList.add("editing"); });
+  });
+  document.querySelectorAll(".cancel-named").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      row.querySelectorAll("input.edit-val").forEach(function (input) {
+        var viewVal = input.previousElementSibling;
+        if (viewVal && viewVal.classList.contains("view-val")) input.value = viewVal.textContent;
+      });
+      row.classList.remove("editing");
+    });
+  });
+  document.querySelectorAll(".save-named").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      var table = btn.dataset.table;
+      var oldName = row.dataset.name;
+      var newName = row.querySelector(".name-field").value.trim();
+      var sortOrder = row.querySelector(".sort-order-field").value;
+      if (!newName) { showToast("Name is required", true); return; }
+      post("/api/admin/" + table + "/" + encodeURIComponent(oldName) + "/save", { name: newName, sort_order: sortOrder })
+        .then(function (res) {
+          if (!res.ok) { showToast(res.data.error || "Failed", true); return; }
+          var n = res.data.updated_historical_rows || 0;
+          showToast("Saved." + (n ? " Updated " + n + " past entr" + (n === 1 ? "y" : "ies") + " too." : ""));
+          location.reload();
+        });
+    });
+  });
+
+  // ── Door types / work centres: add new ──
+  document.querySelectorAll('.inline-form[data-form="named"]').forEach(function (form) {
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var table = form.dataset.table;
+      var name = form.querySelector('[name="name"]').value.trim();
+      post("/api/admin/" + table, { name: name }).then(function (res) {
+        if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+      });
+    });
+  });
+
+  // ── Door codes: read-only rows + a per-row Edit button (2026-10-22 --
+  //    reverses the 2026-10-20 "every row is a live input" decision), same
+  //    view-val/edit-val pattern as the Reasons tab. "Check SyteLine" still
+  //    appends blank rows for any code found live that isn't already in the
+  //    table -- a brand-new row has nothing to show read-only yet, so it's
+  //    added already in edit mode. ──
+  var doorCodeRows = document.getElementById("doorCodeRows");
+
+  function wireDoorCodeRow(tr) {
+    var editBtn = tr.querySelector(".edit-door-code");
+    if (editBtn) editBtn.addEventListener("click", function () { tr.classList.add("editing"); });
+
+    var cancelBtn = tr.querySelector(".cancel-door-code");
+    if (cancelBtn) cancelBtn.addEventListener("click", function () {
+      if (!tr.dataset.code) { tr.remove(); return; } // never saved -- just discard the blank row
+      tr.querySelectorAll("input.edit-val").forEach(function (input) {
+        var viewVal = input.previousElementSibling;
+        if (viewVal && viewVal.classList.contains("view-val")) input.value = viewVal.textContent;
+      });
+      tr.classList.remove("editing");
+    });
+
+    tr.querySelector(".save-door-code").addEventListener("click", function () {
+      var oldCode = tr.dataset.code || null;
+      var newCode = tr.querySelector('[data-field="code"]').value.trim();
+      var familyName = tr.querySelector('[data-field="family_name"]').value.trim();
+      var description = tr.querySelector('[data-field="description"]').value.trim();
+      if (!newCode || !familyName) { showToast("Code and family name are both required", true); return; }
+      post("/api/admin/door-codes", { old_code: oldCode, cpq_code: newCode, family_name: familyName, description: description }).then(function (res) {
+        if (res.ok) { showToast("Saved " + newCode + "."); location.reload(); }
+        else showToast(res.data.error || "Failed", true);
+      });
+    });
+  }
+  document.querySelectorAll("#doorCodeRows tr").forEach(wireDoorCodeRow);
+
+  function addDoorCodeRow(code, familyName) {
+    var tr = document.createElement("tr");
+    tr.classList.add("editing");
+    tr.innerHTML =
+      '<td><span class="view-val"></span><input type="text" class="edit-val rate-input" data-field="code" value="" style="width:90px;"></td>' +
+      '<td><span class="view-val"></span><input type="text" class="edit-val rate-input" data-field="family_name" value="" style="width:100%; max-width:200px;"></td>' +
+      '<td><span class="view-val"></span><input type="text" class="edit-val rate-input" data-field="description" value="" style="width:100%; max-width:280px;"></td>' +
+      '<td><span class="view-val"></span></td>' +
+      '<td>' +
+      '<span class="view-val actions-row"><button class="btn-sm edit-door-code" type="button">Edit</button></span>' +
+      '<span class="edit-val actions-row"><button class="btn-sm accent save-door-code" type="button">Save</button><button class="btn-sm cancel-door-code" type="button">Cancel</button></span>' +
+      '</td>';
+    tr.querySelector('[data-field="code"]').value = code || "";
+    tr.querySelector('[data-field="family_name"]').value = familyName || "";
+    doorCodeRows.appendChild(tr);
+    wireDoorCodeRow(tr);
+    return tr;
+  }
+
+  document.getElementById("btnAddDoorCodeRow").addEventListener("click", function () {
+    addDoorCodeRow("", "").querySelector('[data-field="code"]').focus();
+  });
+
+  document.getElementById("btnCheckUnmapped").addEventListener("click", function (e) {
+    e.target.disabled = true; e.target.textContent = "Checking…";
+    document.getElementById("unmappedCodesResult").textContent = "";
+    fetch("/api/admin/door-codes/unmapped").then(function (r) { return r.json(); }).then(function (res) {
+      e.target.disabled = false; e.target.textContent = "Check SyteLine for new codes (~15-20s)";
+      if (!res.ok) { document.getElementById("unmappedCodesResult").textContent = res.error || "Failed"; return; }
+      var existing = Array.prototype.map.call(doorCodeRows.querySelectorAll("tr"), function (tr) { return tr.dataset.code; });
+      var added = 0;
+      res.codes.forEach(function (code) {
+        if (existing.indexOf(code) === -1) { addDoorCodeRow(code, ""); added++; }
+      });
+      document.getElementById("unmappedCodesResult").textContent = added
+        ? "Added " + added + " new code" + (added === 1 ? "" : "s") + " below — fill in a description and Save."
+        : "No new codes found — everything SyteLine has is already listed.";
+    });
+  });
+
+  // ── Colours: swatches, search, hide-no-swatch, sortable headers
+  //    (all client-side over the rendered rows — 500 rows is fine) ──
+  function rgbToHex(rgb) {
+    var p = String(rgb || "").split(",").map(function (s) { return parseInt(s.trim(), 10); });
+    return p.length === 3 && p.every(function (v) { return v >= 0 && v <= 255; })
+      ? "#" + p.map(function (v) { return v.toString(16).padStart(2, "0"); }).join("") : "";
+  }
+  document.querySelectorAll("#colourRows tr").forEach(function (tr) {
+    var hex = rgbToHex(tr.dataset.rgb);
+    if (hex) tr.querySelector(".colour-swatch-cell").innerHTML =
+      '<span class="chart-legend-swatch" style="background:' + hex + '; width:14px; height:14px;"></span>';
+  });
+
+  function applyColourFilters() {
+    var q = document.getElementById("colourSearch").value.toLowerCase();
+    var hideBlank = document.getElementById("colourHideBlank").checked;
+    var shown = 0, total = 0;
+    document.querySelectorAll("#colourRows tr").forEach(function (tr) {
+      total++;
+      var matches = !q || [tr.dataset.name, tr.dataset.code, tr.dataset.dulux].some(function (v) {
+        return (v || "").toLowerCase().indexOf(q) !== -1;
+      });
+      var hasSwatch = !!rgbToHex(tr.dataset.rgb);
+      tr.hidden = !matches || (hideBlank && !hasSwatch);
+      if (!tr.hidden) shown++;
+    });
+    document.getElementById("colourCount").textContent = shown + " of " + total + " colours";
+  }
+  document.getElementById("colourSearch").addEventListener("input", applyColourFilters);
+  document.getElementById("colourHideBlank").addEventListener("change", applyColourFilters);
+  applyColourFilters();
+
+  var colourSort = { key: null, dir: "asc" };
+  document.getElementById("colourTable").querySelector("thead").addEventListener("click", function (e) {
+    var th = e.target.closest("th.sortable");
+    if (!th) return;
+    var key = th.dataset.key;
+    colourSort.dir = (colourSort.key === key && colourSort.dir === "asc") ? "desc" : "asc";
+    colourSort.key = key;
+    var attr = key === "name" ? "name" : key === "code" ? "code" : key === "dulux_code" ? "dulux" : "base";
+    var tbody = document.getElementById("colourRows");
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+    rows.sort(function (a, b) {
+      var va = (a.dataset[attr] || "").toLowerCase(), vb = (b.dataset[attr] || "").toLowerCase();
+      if (!va && !vb) return 0;
+      if (!va) return 1;
+      if (!vb) return -1;
+      var cmp = va.localeCompare(vb, undefined, { numeric: true });
+      return colourSort.dir === "asc" ? cmp : -cmp;
+    });
+    rows.forEach(function (tr) { tbody.appendChild(tr); });
+  });
+
+  // ── Items ──
+  var itemRows = document.getElementById("itemRows");
+  function renderItemRow(item) {
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + item.part_number + "</td>" +
+      "<td>" + (item.description || "") + "</td>" +
+      "<td>" + (item.std_cost != null ? Number(item.std_cost).toFixed(2) : "—") + "</td>" +
+      '<td><input class="rate-input" data-field="rule" value="' + (item.rule != null ? item.rule : 1) + '"></td>' +
+      '<td><button class="btn-sm accent save-item" type="button">Save</button></td>';
+    tr.querySelector(".save-item").addEventListener("click", function (e) {
+      var rule = tr.querySelector('[data-field="rule"]').value;
+      post("/api/admin/items/" + encodeURIComponent(item.part_number) + "/rule", { rule: rule }).then(function (res) {
+        showToast(res.ok ? "Saved " + item.part_number + "." : "Save failed", !res.ok);
+      });
+    });
+    return tr;
+  }
+  var itemSearchDebounced;
+  document.getElementById("itemSearch").addEventListener("input", function () {
+    var q = this.value;
+    clearTimeout(itemSearchDebounced);
+    if (q.trim().length < 2) { itemRows.innerHTML = ""; return; }
+    itemSearchDebounced = setTimeout(function () {
+      fetch("/api/admin/items/search?q=" + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (items) {
+        itemRows.innerHTML = "";
+        items.forEach(function (item) { itemRows.appendChild(renderItemRow(item)); });
+      });
+    }, 250);
+  });
+
+  // ── Users ──
+  document.getElementById("formNewUser").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var fd = new FormData(e.target);
+    post("/api/users", Object.fromEntries(fd)).then(function (res) {
+      if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+    });
+  });
+  document.querySelectorAll(".user-role").forEach(function (sel) {
+    sel.addEventListener("change", function () {
+      post("/api/users/" + sel.dataset.id + "/role", { role: sel.value }).then(function (res) {
+        showToast(res.ok ? "Role updated." : (res.data.error || "Failed"), !res.ok);
+      });
+    });
+  });
+  document.querySelectorAll(".user-toggle-active").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      post("/api/users/" + btn.dataset.id + "/active", { active: btn.dataset.active !== "true" }).then(function (res) {
+        if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+      });
+    });
+  });
+  document.querySelectorAll(".user-delete").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      post("/api/users/" + btn.dataset.id, null, "DELETE").then(function (res) {
+        if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+      });
+    });
+  });
+  document.querySelectorAll(".user-reset-pw").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pw = window.prompt("New 4-digit PIN (leave blank to clear -- viewer accounts only):");
+      if (pw === null) return;
+      post("/api/users/" + btn.dataset.id + "/reset-password", { password: pw }).then(function (res) {
+        showToast(res.ok ? "Password reset." : (res.data.error || "Failed"), !res.ok);
+      });
+    });
+  });
+})();
+</script>
+{% endblock %}

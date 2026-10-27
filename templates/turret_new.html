@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if event else "New" }} turret entry · Doors Rework{% endblock %}
+{% block content %}
+<div class="conn-banner test" id="testOrderBanner" hidden>🧪 TEST ORDER -- this is the fake SO, not a real Sales Order</div>
+<div class="layout">
+  <form class="form-col" id="turretForm" novalidate>
+
+    <div class="card">
+      <h2>Job</h2>
+      <div class="row3">
+        <div class="field" id="soField">
+          <label for="soNumber">SO number <span class="required-mark">*</span></label>
+          <input type="text" id="soNumber" placeholder="S000XXXXXX" autocomplete="off" value="{{ event.sales_number or '' }}">
+          <p class="hint" id="soStatus">Enter an SO number to auto-fill Job Number, Colour, and Door Type.</p>
+          <p class="field-error">Required.</p>
+        </div>
+        <div class="field" id="jobNumberField">
+          <label for="jobNumber">Job number</label>
+          <input type="text" id="jobNumber" placeholder="J000XXXXXX" autocomplete="off" value="{{ event.job_number or '' }}">
+        </div>
+        <div class="field" id="doorTypeField">
+          <label for="doorType">Door type <span class="required-mark">*</span></label>
+          <select id="doorType">
+            <option value="">Select…</option>
+            {% for dt in door_types %}<option value="{{ dt }}" {% if event and event.door_type == dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
+          </select>
+          <p class="field-error">Required.</p>
+        </div>
+      </div>
+      <div class="field" id="colourField">
+        <label for="colourInput">Colour <span class="required-mark">*</span></label>
+        <div class="combo" id="colourCombo">
+          <input type="text" id="colourInput" placeholder="Search colours…" autocomplete="off" value="{{ event.colour or '' }}">
+          <ul class="combo-list" id="colourList" hidden></ul>
+        </div>
+        <p class="field-error">Select a colour from the list.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Materials used</h2>
+      <p class="hint" id="materialsHint">Material 1/2 are scoped to this job's real BOM once an SO number resolves. Other always offers every raw sheet item.</p>
+      {% for slot, label in [("a", "Material 1"), ("b", "Material 2"), ("c", "Other")] %}
+      <div class="row2">
+        <div class="field" {% if slot == "a" %}id="sheetAField"{% endif %}>
+          <label for="sheet{{ slot|upper }}">{{ label }}{% if slot == 'a' %} <span class="required-mark">*</span>{% endif %}</label>
+          <select id="sheet{{ slot|upper }}">
+            <option value="">{{ "Select…" if slot == "a" else "None" }}</option>
+            {% for s in sheet_items %}
+            <option value="{{ s.part_number }}" {% if event and event["sheet_" + slot] == s.part_number %}selected{% endif %}>{{ s.part_number }} — {{ s.description }}</option>
+            {% endfor %}
+          </select>
+          {% if slot == "a" %}<p class="field-error">Required.</p>{% endif %}
+        </div>
+        <div class="field">
+          <label for="qty{{ slot|upper }}">Quantity</label>
+          <input type="number" id="qty{{ slot|upper }}" inputmode="decimal" min="0" step="any" placeholder="—"
+                 value="{{ event["qty_" + slot + "_ordered"] if event and event["qty_" + slot + "_ordered"] is not none else '' }}">
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Rework / scrap <span class="optional">optional -- add this when it happens, even later</span></h2>
+      <p class="hint">Saving a rework material here stamps today's date against that slot -- the date it was actually recorded, which is what reconciliation against SyteLine depends on. Rework material 1/2 are scoped to this job's BOM the same way Material 1/2 above are; Other always offers every raw sheet item.</p>
+
+      <div class="field" id="reworkTypeField">
+        <label>Type</label>
+        <div class="segmented" id="reworkTypeSeg" role="group" aria-label="Rework type">
+          {% for rt in rework_types %}
+          <button type="button" class="seg-btn" data-sev="{{ 'warn' if rt == 'Replacement Parts' else 'crit' }}" data-value="{{ rt }}" aria-pressed="{{ 'true' if event and event.rework_type == rt else 'false' }}">
+            <span class="dot"></span>{{ rt }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="field" id="reasonField">
+        <label for="reasonInput">Reason</label>
+        <div class="combo" id="reasonCombo">
+          <input type="text" id="reasonInput" placeholder="Search reasons…" autocomplete="off" value="{{ event.reason or '' }}">
+          <ul class="combo-list" id="reasonList" hidden></ul>
+        </div>
+      </div>
+
+      {% for slot, label in [("a", "Rework material 1"), ("b", "Rework material 2"), ("c", "Other")] %}
+      <div class="row2">
+        <div class="field">
+          <label for="scrapSheet{{ slot|upper }}">{{ label }}</label>
+          <select id="scrapSheet{{ slot|upper }}">
+            <option value="">None</option>
+            {% for s in sheet_items %}
+            <option value="{{ s.part_number }}" {% if event and event["scrap_sheet_" + slot] == s.part_number %}selected{% endif %}>{{ s.part_number }} — {{ s.description }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="scrapQty{{ slot|upper }}">Quantity</label>
+          <input type="number" id="scrapQty{{ slot|upper }}" inputmode="decimal" min="0" step="any" placeholder="—"
+                 value="{{ event["scrap_qty_" + slot] if event and event["scrap_qty_" + slot] is not none else '' }}">
+          {% if event and event["scrap_date_" + slot] %}
+          <p class="hint">Recorded {{ event["scrap_date_" + slot].strftime("%d %b %Y") }}</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Notes <span class="optional">optional</span></h2>
+      <textarea id="notesInput" placeholder="e.g. machine jammed mid-cut">{{ event.comments or '' }}</textarea>
+    </div>
+
+    <button type="button" class="btn-text" id="clearBtn">Clear form</button>
+  </form>
+
+  <aside class="summary-col">
+    <div class="card summary-card">
+      <h2>{{ "Save changes" if event else "Log entry" }}</h2>
+      <div class="sumrow"><span>Scrap cost</span><strong id="sumScrapCost">{{ "$%.2f"|format(event.scrap_cost) if event and event.scrap_cost is not none else "—" }}</strong></div>
+      <p class="hint" id="scrapCostHint">Estimated from each item's standard cost x quantity -- recalculated and saved for real once you save.</p>
+      <p class="hint">{% if event %}Reopening entry #{{ event.id }} -- any field can be corrected, and rework/scrap can be added or updated.{% else %}Materials used today. Come back and reopen this entry later to add rework/scrap if it happens.{% endif %}</p>
+      <button type="submit" form="turretForm" class="btn-primary" id="submitBtn">{{ "Save changes" if event else "Log entry" }}</button>
+    </div>
+  </aside>
+</div>
+
+<div class="mobile-bar">
+  <div class="mb-total"><span>Scrap cost</span><strong id="sumScrapCostMobile">{{ "$%.2f"|format(event.scrap_cost) if event and event.scrap_cost is not none else "—" }}</strong></div>
+  <button type="submit" form="turretForm" class="btn-primary" id="submitBtnMobile">{{ "Save changes" if event else "Log entry" }}</button>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/static/app.js"></script>
+<script>
+(function () {
+  var EVENT_ID = {{ event.id if event else "null" }};
+  var COLOURS = {{ colours|tojson }};
+  var REASONS = {{ reasons|tojson }};
+  var SHEET_ITEMS = {{ sheet_items|tojson }};
+  var SHEET_CODES = SHEET_ITEMS.map(function (s) { return s.part_number; });
+  var SHEET_COST = {};
+  SHEET_ITEMS.forEach(function (s) { SHEET_COST[s.part_number] = s.std_cost; });
+
+  var state = { reworkType: {{ (event.rework_type if event else None)|tojson }} };
+
+  // ── Colour combo ──
+  var colourInput = document.getElementById("colourInput");
+  makeCombo(colourInput, document.getElementById("colourList"), COLOURS,
+    function (c) { return c; }, null,
+    function (c) { colourInput.value = c; setFieldValid("colourField", true); });
+
+  // ── SO number lookup: auto-fills Job Number, Colour, Door Type from the
+  //    same local synced_orders cache the Doors entry form reads (see
+  //    services/erp_lookup.py) -- never queries SyteLine live. Doesn't touch
+  //    the material fields: a job's real material list (jobmatl_mst) isn't
+  //    scoped to Sheet stock the way Turret needs, so it wouldn't help here
+  //    the way it does on the Doors form. ──
+  var soInput = document.getElementById("soNumber");
+  var soStatus = document.getElementById("soStatus");
+  var jobNumberInput = document.getElementById("jobNumber");
+  var doorTypeSel = document.getElementById("doorType");
+  var TEST_SO_NUMBER = {{ test_so_number|tojson }};
+  var testOrderBanner = document.getElementById("testOrderBanner");
+
+  function updateTestBanner() {
+    testOrderBanner.hidden = soInput.value.trim().toLowerCase() !== TEST_SO_NUMBER.toLowerCase();
+  }
+  soInput.addEventListener("input", updateTestBanner);
+  updateTestBanner();
+
+  // Material 1/2 and Rework material 1/2 scope to whatever Sheet items are
+  // actually on this job's real BOM (queries.job_materials_for_jobs_query,
+  // same source Doors' Product Code scoping uses) -- "Other" (slot C) always
+  // offers the complete Sheet list instead, for whatever isn't on the
+  // planned BOM. Rebuilding a <select>'s options wipes any existing value,
+  // so the currently-selected one (if any) is always re-added rather than
+  // silently lost.
+  function populateSheetSelect(selectEl, items, placeholder) {
+    var current = selectEl.value;
+    selectEl.innerHTML = "";
+    var blank = document.createElement("option");
+    blank.value = ""; blank.textContent = placeholder;
+    selectEl.appendChild(blank);
+    items.forEach(function (s) {
+      var opt = document.createElement("option");
+      opt.value = s.part_number; opt.textContent = s.part_number + " — " + s.description;
+      selectEl.appendChild(opt);
+    });
+    if (current && !items.some(function (s) { return s.part_number === current; })) {
+      var extra = document.createElement("option");
+      extra.value = current; extra.textContent = current + " (not on this job's BOM)";
+      selectEl.appendChild(extra);
+    }
+    selectEl.value = current;
+  }
+
+  function lookupOrder() {
+    var so = soInput.value.trim();
+    if (!so) { soStatus.textContent = "Enter an SO number to auto-fill Job Number, Colour, and Door Type."; return; }
+    soStatus.textContent = "Looking up order…";
+    fetch("/api/orders/" + encodeURIComponent(so))
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.data.ok) {
+          soStatus.textContent = (res.data && res.data.error) || "Order not found — you can still fill this in manually.";
+          return;
+        }
+        applyOrder(res.data.order);
+      })
+      .catch(function () {
+        soStatus.textContent = "Couldn't reach the server to look up this order.";
+      });
+  }
+
+  function applyOrder(order) {
+    var bomSheets = (order.materials || []).filter(function (m) { return SHEET_CODES.indexOf(m.part_number) !== -1; });
+
+    soStatus.textContent = "Loaded " + (order.job_number || "order")
+      + (bomSheets.length ? " — " + bomSheets.length + " sheet item(s) on the BOM" : " — no sheet items found on this job's BOM, showing the full list") + ".";
+
+    if (order.job_number) jobNumberInput.value = order.job_number;
+
+    var colourVal = order.colour_out || order.colour_in;
+    if (colourVal) { colourInput.value = colourVal; setFieldValid("colourField", true); }
+
+    if (order.door_type) {
+      // Turret's Door Type list is just whatever's already in turret_events,
+      // not a curated list -- if this order's door type isn't in there yet,
+      // add it instead of silently failing to select anything.
+      var existing = Array.prototype.some.call(doorTypeSel.options, function (o) { return o.value === order.door_type; });
+      if (!existing) {
+        var opt = document.createElement("option");
+        opt.value = order.door_type; opt.textContent = order.door_type;
+        doorTypeSel.appendChild(opt);
+      }
+      doorTypeSel.value = order.door_type;
+      setFieldValid("doorTypeField", true);
+    }
+
+    var scoped = bomSheets.length ? bomSheets : SHEET_ITEMS;
+    populateSheetSelect(document.getElementById("sheetA"), scoped, bomSheets.length ? "Select from this job's BOM…" : "Select…");
+    populateSheetSelect(document.getElementById("sheetB"), scoped, "None");
+    populateSheetSelect(document.getElementById("scrapSheetA"), scoped, "None");
+    populateSheetSelect(document.getElementById("scrapSheetB"), scoped, "None");
+    recalcScrapCost();
+  }
+
+  soInput.addEventListener("blur", lookupOrder);
+  soInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); lookupOrder(); }
+  });
+  if (soInput.value.trim()) lookupOrder();
+
+  // ── Reason combo ──
+  var reasonInput = document.getElementById("reasonInput");
+  makeCombo(reasonInput, document.getElementById("reasonList"), REASONS,
+    function (r) { return r.reason; }, function (r) { return r.code || ""; },
+    function (r) { reasonInput.value = r.reason; });
+
+  // ── Scrap cost (live estimate only -- services.turret.update_event
+  //    recomputes and stores the real figure server-side on save, same
+  //    never-trust-the-client rule as everywhere else in this app) ──
+  function recalcScrapCost() {
+    var total = null;
+    ["A", "B", "C"].forEach(function (slot) {
+      var sheet = document.getElementById("scrapSheet" + slot).value;
+      var qty = parseFloat(document.getElementById("scrapQty" + slot).value);
+      var cost = sheet && SHEET_COST[sheet];
+      if (cost != null && !isNaN(qty)) total = (total || 0) + cost * qty;
+    });
+    var text = total != null ? nzd(total) : "—";
+    document.getElementById("sumScrapCost").textContent = text;
+    document.getElementById("sumScrapCostMobile").textContent = text;
+  }
+  ["A", "B", "C"].forEach(function (slot) {
+    document.getElementById("scrapSheet" + slot).addEventListener("change", recalcScrapCost);
+    document.getElementById("scrapQty" + slot).addEventListener("input", recalcScrapCost);
+  });
+
+  // ── Rework type segmented control ──
+  var reworkTypeSeg = document.getElementById("reworkTypeSeg");
+  Array.prototype.forEach.call(reworkTypeSeg.children, function (btn) {
+    btn.addEventListener("click", function () {
+      state.reworkType = btn.dataset.value;
+      Array.prototype.forEach.call(reworkTypeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
+      btn.setAttribute("aria-pressed", "true");
+    });
+  });
+
+  // ── Validation ──
+  function setFieldValid(id, ok) { document.getElementById(id).classList.toggle("invalid", !ok); }
+  function validate() {
+    var ok = true;
+    if (!document.getElementById("soNumber").value.trim()) { setFieldValid("soField", false); ok = false; }
+    if (!document.getElementById("doorType").value) { setFieldValid("doorTypeField", false); ok = false; }
+    if (!colourInput.value.trim()) { setFieldValid("colourField", false); ok = false; }
+    if (!document.getElementById("sheetA").value) { setFieldValid("sheetAField", false); ok = false; }
+    return ok;
+  }
+
+  // ── Submit / clear ──
+  var form = document.getElementById("turretForm");
+  var toastTimer;
+  function showToast(msg, isError) {
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = "toast"; }, 3000);
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!validate()) {
+      var firstInvalid = form.querySelector(".invalid input, .invalid select");
+      if (firstInvalid) firstInvalid.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    var submitBtns = [document.getElementById("submitBtn"), document.getElementById("submitBtnMobile")];
+    submitBtns.forEach(function (b) { b.disabled = true; });
+
+    var today = new Date().toISOString().slice(0, 10);
+    var payload = {
+      event_date: today,
+      sales_number: document.getElementById("soNumber").value.trim(),
+      job_number: document.getElementById("jobNumber").value.trim(),
+      door_type: document.getElementById("doorType").value,
+      colour: colourInput.value.trim(),
+      sheet_a: document.getElementById("sheetA").value, qty_a: document.getElementById("qtyA").value || null,
+      sheet_b: document.getElementById("sheetB").value, qty_b: document.getElementById("qtyB").value || null,
+      sheet_c: document.getElementById("sheetC").value, qty_c: document.getElementById("qtyC").value || null,
+      notes: document.getElementById("notesInput").value.trim(),
+      rework_type: state.reworkType,
+      reason: reasonInput.value.trim(),
+      scrap_sheet_a: document.getElementById("scrapSheetA").value, scrap_qty_a: document.getElementById("scrapQtyA").value || null,
+      scrap_sheet_b: document.getElementById("scrapSheetB").value, scrap_qty_b: document.getElementById("scrapQtyB").value || null,
+      scrap_sheet_c: document.getElementById("scrapSheetC").value, scrap_qty_c: document.getElementById("scrapQtyC").value || null,
+    };
+
+    var url = EVENT_ID ? "/api/turret-events/" + EVENT_ID : "/api/turret-events";
+    fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        submitBtns.forEach(function (b) { b.disabled = false; });
+        if (!res.ok) { showToast("Couldn't save — check the highlighted fields.", true); return; }
+        if (EVENT_ID) {
+          showToast("Entry updated.");
+        } else {
+          showToast("Entry logged.");
+          window.location.href = "/turret/" + res.data.id + "/edit";
+        }
+      })
+      .catch(function () {
+        submitBtns.forEach(function (b) { b.disabled = false; });
+        showToast("Couldn't reach the server — try again.", true);
+      });
+  });
+
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    if (EVENT_ID) { window.location.href = "/turret/new"; return; }
+    form.reset();
+    state.reworkType = null;
+    Array.prototype.forEach.call(reworkTypeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
+    ["soField", "doorTypeField", "colourField", "sheetAField"].forEach(function (id) { setFieldValid(id, true); });
+    // form.reset() doesn't fire "input" events, so anything driven by one
+    // (the TEST ORDER banner, the SO status line) is left stale otherwise --
+    // confirmed live 2026-10-22: the banner stayed visible after Clear form
+    // even with the SO field back to empty.
+    updateTestBanner();
+    soStatus.textContent = "Enter an SO number to auto-fill Job Number, Colour, and Door Type.";
+  });
+})();
+</script>
+{% endblock %}

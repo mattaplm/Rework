@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Turret log · Doors Rework{% endblock %}
+{% block content %}
+
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="scrap_log">Scrap log</button>
+  <button class="tab-btn" data-tab="write_off">Scrap write-off</button>
+</div>
+
+<!-- ───────────────────────── Scrap log ───────────────────────── -->
+<div class="tab-panel active" data-panel="scrap_log">
+  <form class="card" method="get" style="margin-bottom:16px;">
+    <div class="filters">
+      <div class="field">
+        <label for="month">Month</label>
+        <select id="month" name="month">
+          <option value="">All</option>
+          {% for m in range(1, 13) %}
+          <option value="{{ m }}" {% if filters.month == m|string %}selected{% endif %}>
+            {{ ["January","February","March","April","May","June","July","August","September","October","November","December"][m-1] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="year">Year</label>
+        <select id="year" name="year">
+          <option value="">All</option>
+          {% for y in years %}<option value="{{ y }}" {% if filters.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="door_type">Door type</label>
+        <select id="door_type" name="door_type">
+          <option value="">All</option>
+          {% for t in door_types %}<option value="{{ t }}" {% if filters.door_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="job_number">Job number</label>
+        <input type="text" id="job_number" name="job_number" value="{{ filters.job_number or '' }}" placeholder="J000…">
+      </div>
+      <button type="submit" class="btn-primary" style="width:auto; padding:0 20px;">Filter</button>
+      {% if filters.year or filters.month or filters.door_type or filters.job_number %}
+      <a href="{{ url_for('turret.list_page') }}" class="btn-text">Clear filters</a>
+      {% endif %}
+    </div>
+  </form>
+
+  {% if events %}
+  <div class="card">
+    <div class="table-scroll">
+      <table class="rework-table compact">
+        <thead>
+          <tr>
+            <th>Date</th><th>Door type</th><th>Sales #</th><th>Job #</th>
+            <th>Material 1</th><th>Material 2</th><th>Other</th>
+            <th>Open</th><th>Variation</th><th>Scrap code</th><th>Scrap qty</th><th>Scrap cost</th><th>Comments</th>
+            {% if current_user and current_user.role in ('operator', 'admin') %}<th>Actions</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in events %}
+          <tr {% if e.sales_number and e.sales_number|lower == test_so_number|lower %}class="test-order-row"{% endif %}>
+            <td class="col-nowrap">{{ e.event_date.strftime("%d %b %Y") }}</td>
+            <td class="col-nowrap">{{ e.door_type or "—" }}</td>
+            <td class="col-nowrap">
+              {{ e.sales_number or "—" }}
+              {% if e.sales_number and e.sales_number|lower == test_so_number|lower %}<span class="test-badge">TEST</span>{% endif %}
+            </td>
+            <td class="col-nowrap">{{ e.job_number or "—" }}</td>
+            <td class="col-nowrap">
+              {% if e.sheet_a %}{{ e.sheet_a }} ({{ e.qty_a_ordered|int if e.qty_a_ordered is not none else "—" }}/{{ e.qty_a_picked|int if e.qty_a_picked is not none else "—" }}){% else %}—{% endif %}
+            </td>
+            <td class="col-nowrap">
+              {% if e.sheet_b %}{{ e.sheet_b }} ({{ e.qty_b_ordered|int if e.qty_b_ordered is not none else "—" }}/{{ e.qty_b_picked|int if e.qty_b_picked is not none else "—" }}){% else %}—{% endif %}
+            </td>
+            <td class="col-nowrap">
+              {% if e.sheet_c %}{{ e.sheet_c }} ({{ e.qty_c_ordered|int if e.qty_c_ordered is not none else "—" }}/{{ e.qty_c_picked|int if e.qty_c_picked is not none else "—" }}){% else %}—{% endif %}
+            </td>
+            <td class="col-nowrap">{{ e.open_status or "—" }}</td>
+            <td class="col-wide">{{ e.variation or "" }}</td>
+            <td>{{ e.scrap_code or "—" }}</td>
+            <td class="col-right">
+              {% set total_scrap = (e.scrap_qty_a or 0) + (e.scrap_qty_b or 0) + (e.scrap_qty_c or 0) %}
+              {{ total_scrap|int if total_scrap else "—" }}
+            </td>
+            <td class="col-nowrap col-right">{{ "$%.2f"|format(e.scrap_cost) if e.scrap_cost is not none else "—" }}</td>
+            <td class="col-wide">{{ e.comments or "" }}</td>
+            {% if current_user and current_user.role in ('operator', 'admin') %}
+            <td class="col-nowrap"><a href="{{ url_for('turret.edit_page', event_id=e.id) }}" class="btn-sm">Edit</a></td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin-top:10px;">Material columns show qty ordered/qty picked -- "picked" is only ever filled in on historical imported rows (the old spreadsheet tracked it from the warehouse pick); new web-form entries always show "—" there since there's no field for it on the entry form. "Scrap qty" totals whatever was scrapped off Material 1/2/Other on that row -- see the Scrap code for why. "Scrap cost" is qty &times; each item's standard cost, recomputed automatically whenever scrap is saved on a web-form entry; historical imported rows keep whatever the old spreadsheet's own figure was instead.</p>
+  </div>
+  {% else %}
+  <div class="card empty-state">
+    <p>No turret events match these filters yet.</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ───────────────────────── Scrap write-off ───────────────────────── -->
+<div class="tab-panel" data-panel="write_off">
+  <div class="card sticky-filter">
+    <h2>Scrap write-off, by week</h2>
+    <p class="hint">
+      Scrap recorded in one week is written off in SyteLine the <strong>following</strong> week (ERP uses that
+      later week's date) -- e.g. scrap recorded in week 42 gets written off in week 43. Each row groups together
+      every scrap recording for that item due in that write-off week, which can come from several different jobs --
+      "Production week(s)" shows every distinct production week those jobs came from, for context (the write-off week
+      itself is derived from the date the scrap was actually recorded, not a job's production week), and "Lines"
+      is how many separate scrap recordings got added together into that row's "Qty scrapped" total.
+    </p>
+    <form method="get" id="writeoffFilterForm" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+      <label for="write_off_period" style="font-size:.85rem; font-weight:600;">Write-off week</label>
+      <select id="write_off_period">
+        <option value="">All weeks</option>
+        {% for w in available_weeks %}
+        <option value="{{ w.write_off_year }}-{{ w.write_off_week }}"
+          {% if write_off_year == w.write_off_year|string and write_off_week == w.write_off_week|string %}selected{% endif %}>
+          Week {{ w.write_off_week }}, {{ w.write_off_year }}
+        </option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="write_off_year" id="writeOffYearHidden" value="{{ write_off_year or '' }}">
+      <input type="hidden" name="write_off_week" id="writeOffWeekHidden" value="{{ write_off_week or '' }}">
+    </form>
+  </div>
+
+  {% if writeoff_rows %}
+  <div class="card" style="margin-top:16px;">
+    <div class="table-scroll">
+      <table class="rework-table">
+        <thead>
+          <tr>
+            <th>Write-off week</th><th>Item</th><th>Description</th><th>Production week(s)</th>
+            <th>Qty scrapped</th><th>Lines</th><th>ERP actual</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in writeoff_rows %}
+          <tr {% if r.includes_test_data %}class="test-order-row"{% endif %}>
+            <td class="col-nowrap">Week {{ r.write_off_week }}, {{ r.write_off_year }}</td>
+            <td class="col-nowrap">
+              {{ r.item }}
+              {% if r.includes_test_data %}<span class="test-badge">TEST</span>{% endif %}
+            </td>
+            <td class="col-wide">{{ r.description or "—" }}</td>
+            <td class="col-nowrap">{{ r.from_weeks|join(", ") if r.from_weeks else "—" }}</td>
+            <td class="col-right">{{ r.total_qty|int }}</td>
+            <td class="col-right">{{ r.line_count }}</td>
+            <td class="col-nowrap">
+              {% if r.erp_qty is none %}
+                <span class="badge badge-grey">Not in ERP yet</span>
+              {% elif r.erp_qty == r.total_qty %}
+                <span class="badge badge-green">✓ matches ({{ r.erp_qty|int }})</span>
+              {% else %}
+                <span class="badge badge-red">ERP {{ r.erp_qty|int }} vs logged {{ r.total_qty|int }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin-top:10px;">"ERP actual" is each item's SyteLine scrap write-off total for that same write-off week (reason_code SCR), synced via Admin. A mismatch isn't necessarily a bug on either side -- it just means what's logged here and what's actually been written off in SyteLine don't currently agree for that item/week, worth checking.</p>
+  </div>
+  {% else %}
+  <div class="card empty-state" style="margin-top:16px;">
+    <p>No scrap recorded for this write-off week.</p>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var tabBar = document.getElementById("tabBar");
+  function activateTab(tabKey) {
+    var btn = tabBar.querySelector('.tab-btn[data-tab="' + tabKey + '"]');
+    var panel = document.querySelector('.tab-panel[data-panel="' + tabKey + '"]');
+    if (!btn || !panel) return false;
+    document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.remove("active"); });
+    document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+    btn.classList.add("active");
+    panel.classList.add("active");
+    return true;
+  }
+  tabBar.addEventListener("click", function (e) {
+    var btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    activateTab(btn.dataset.tab);
+    location.hash = btn.dataset.tab;
+  });
+  if (location.hash) activateTab(location.hash.slice(1));
+
+  var periodSelect = document.getElementById("write_off_period");
+  periodSelect.addEventListener("change", function () {
+    var parts = this.value.split("-");
+    document.getElementById("writeOffYearHidden").value = parts[0] || "";
+    document.getElementById("writeOffWeekHidden").value = parts[1] || "";
+    document.getElementById("writeoffFilterForm").submit();
+  });
+})();
+</script>
+{% endblock %}

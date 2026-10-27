@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Doors Rework{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">☰</button>
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+<div class="app-shell">
+
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-row">
+        <div class="brand-mark">DR</div>
+        <div>
+          <div class="app-name">Doors Rework</div>
+          <div class="app-sub">Rework &amp; scrap log</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">Overview</div>
+      <a href="{{ url_for('dashboard.dashboard_page') }}" class="nav-link {% if active == 'dashboard' %}active{% endif %}">
+        <span class="nav-icon">📊</span> Dashboard
+      </a>
+
+      <div class="nav-label" style="margin-top:12px;">Log</div>
+      <a href="{{ url_for('rework.list_page') }}" class="nav-link {% if active == 'log' %}active{% endif %}">
+        <span class="nav-icon">📋</span> Rework log
+      </a>
+      {% if current_user and current_user.role in ('operator', 'admin') %}
+      <a href="{{ url_for('rework.new_page') }}" class="nav-link {% if active == 'new_entry' %}active{% endif %}">
+        <span class="nav-icon">➕</span> New entry
+      </a>
+      {% endif %}
+
+      <a href="{{ url_for('turret.list_page') }}" class="nav-link {% if active == 'turret' %}active{% endif %}">
+        <span class="nav-icon">🪚</span> Turret log
+      </a>
+      {% if current_user and current_user.role in ('operator', 'admin') %}
+      <a href="{{ url_for('turret.new_page') }}" class="nav-link {% if active == 'turret_new' %}active{% endif %}">
+        <span class="nav-icon">➕</span> New turret entry
+      </a>
+      {% endif %}
+
+      {% if current_user and current_user.role == 'admin' %}
+      <div class="nav-label" style="margin-top:12px;">System</div>
+      <a href="{{ url_for('import_excel.import_page') }}" class="nav-link {% if active == 'import' %}active{% endif %}">
+        <span class="nav-icon">📥</span> Import from Excel
+      </a>
+      <a href="{{ url_for('admin.admin_page') }}" class="nav-link {% if active == 'admin' %}active{% endif %}">
+        <span class="nav-icon">⚙️</span> Admin
+      </a>
+      {% endif %}
+    </div>
+
+    <div class="sidebar-footer">
+      {% if current_user %}
+        <div class="user-box">
+          <span class="avatar">{{ current_user.username[:2]|upper }}</span>
+          <div class="user-box-text">
+            <strong>{{ current_user.username }}</strong>
+            <span class="role-tag">{{ current_user.role }}</span>
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('auth.logout') }}">
+          <button type="submit" class="nav-link" style="width:100%; border:none; background:none; text-align:left; cursor:pointer;">
+            <span class="nav-icon">🚪</span> Log out
+          </button>
+        </form>
+      {% else %}
+        <a href="{{ url_for('auth.login_page') }}" class="nav-link"><span class="nav-icon">🔑</span> Log in</a>
+      {% endif %}
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="page">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+</div>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

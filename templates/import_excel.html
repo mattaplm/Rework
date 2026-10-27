@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Import from Excel · Doors Rework{% endblock %}
+{% block content %}
+
+<div class="page-header"><h1>📥 Import from Excel</h1></div>
+
+<div class="card">
+  <p class="hint">
+    Upload the rework workbook (the one with the <code>REWORK</code> sheet) at any time
+    while it's still in parallel use. Already-imported rows are detected and skipped
+    automatically — safe to upload the same file, or a newer export of it, as often as you like.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+    <input type="file" name="file" accept=".xlsx" required>
+    <button type="submit" class="btn-sm accent">Import</button>
+  </form>
+
+  {% if error %}
+  <p style="color:var(--crit); margin-top:14px;">{{ error }}</p>
+  {% endif %}
+
+  {% if result %}
+  <div class="admin-grid" style="margin-top:18px;">
+    <div class="stat-tile">
+      <div class="stat-label">Inserted</div>
+      <div class="stat-value">{{ result.inserted }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-label">Already imported</div>
+      <div class="stat-value">{{ result.skipped_duplicate }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-label">Skipped (incomplete row)</div>
+      <div class="stat-value">{{ result.skipped_invalid }}</div>
+    </div>
+  </div>
+  {% if result.invalid_examples %}
+  <p class="hint" style="margin-top:12px;">A sample of skipped rows (missing a required field — date, SO number, product code, type, reason, colour, door type or work centre):</p>
+  <ul class="hint">
+    {% for ex in result.invalid_examples %}<li>{{ ex }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

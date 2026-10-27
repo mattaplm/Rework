@@ -1,0 +1,13 @@
+{
+  "name": "rework-devdb",
+  "version": "1.0.0",
+  "description": "No-admin-rights local Postgres stand-in for dev (see CLAUDE.md)",
+  "private": true,
+  "scripts": {
+    "db": "pglite-server --db=./data --port=5433 --max-connections=20"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-socket": "^0.2.13"
+  }
+}

@@ -1,0 +1,293 @@
+"""Core rework/scrap log: create and list `rework_events` rows.
+
+`create_event` always recomputes cost server-side from the current item/rate
+data -- a client-side preview is for feedback only and is never trusted for
+what gets stored. Same principle for "Scrap Entire Door": the client may send
+a job's material total it got from /api/orders/<so>, but create_event ignores
+it and re-derives the real figure itself from SO number alone (see
+_full_door_material_cost below), so a tampered or stale client-side number
+can never land in the database.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import db
+from services import erp_lookup, erp_reconciliation, reference_data, test_data
+from services.costing import compute_costs
+
+logger = logging.getLogger(__name__)
+
+VALID_TYPES = ("Rework / Recoat", "Replace Part", "Scrap Entire Door")
+
+REQUIRED_FIELDS = (
+    "rework_date", "type", "so_number", "product_code", "quantity",
+    "reason", "colour", "door_type", "work_centre",
+)
+
+
+class ValidationError(Exception):
+    def __init__(self, errors: dict[str, str]):
+        self.errors = errors
+        super().__init__(", ".join(f"{k}: {v}" for k, v in errors.items()))
+
+
+def _validate(payload: dict) -> dict:
+    errors: dict[str, str] = {}
+    for field in REQUIRED_FIELDS:
+        if not str(payload.get(field) or "").strip():
+            errors[field] = "Required."
+
+    if payload.get("type") and payload["type"] not in VALID_TYPES:
+        errors["type"] = f"Must be one of {', '.join(VALID_TYPES)}."
+
+    try:
+        qty = float(payload.get("quantity") or 0)
+        if qty <= 0:
+            errors["quantity"] = "Must be greater than 0."
+    except (TypeError, ValueError):
+        errors["quantity"] = "Must be a number."
+
+    if payload.get("reason") and not reference_data.get_reason(payload["reason"]):
+        errors["reason"] = "Not a recognised reason."
+
+    if errors:
+        raise ValidationError(errors)
+    return payload
+
+
+def _optional_float(payload: dict, key: str):
+    val = payload.get(key)
+    if val in (None, ""):
+        return None
+    return float(val)
+
+
+def _full_door_material_cost(payload: dict) -> float | None:
+    if payload.get("type") != "Scrap Entire Door" or not payload.get("so_number"):
+        return None
+    try:
+        order = erp_lookup.lookup_order(payload["so_number"])
+    except Exception:
+        logger.exception("Order lookup failed for %s", payload.get("so_number"))
+        return None
+    return order["full_door_material_cost"] if order else None
+
+
+def create_event(payload: dict, user_id: int | None) -> dict:
+    _validate(payload)
+
+    item = reference_data.get_item(payload["product_code"])
+    reason = reference_data.get_reason(payload["reason"])
+    quantity = float(payload["quantity"])
+    full_door_cost = _full_door_material_cost(payload)
+
+    costs = compute_costs(payload["type"], quantity, item, full_door_cost)
+
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO rework_events (
+                rework_date, due_date, type, so_number, product_code, quantity,
+                height_mm, width_mm, cut_length_mm,
+                qty_to_remove, material_cost,
+                reason, source, colour, door_type, work_centre, notes, entered_by_user_id
+            ) VALUES (
+                %(rework_date)s, %(due_date)s, %(type)s, %(so_number)s, %(product_code)s, %(quantity)s,
+                %(height_mm)s, %(width_mm)s, %(cut_length_mm)s,
+                %(qty_to_remove)s, %(material_cost)s,
+                %(reason)s, %(source)s, %(colour)s, %(door_type)s, %(work_centre)s, %(notes)s, %(entered_by_user_id)s
+            ) RETURNING *
+            """,
+            {
+                "rework_date": payload["rework_date"],
+                "due_date": payload.get("due_date") or None,
+                "type": payload["type"],
+                "so_number": payload["so_number"].strip(),
+                "product_code": payload["product_code"].strip().upper(),
+                "quantity": quantity,
+                "height_mm": _optional_float(payload, "height_mm"),
+                "width_mm": _optional_float(payload, "width_mm"),
+                "cut_length_mm": _optional_float(payload, "cut_length_mm"),
+                "qty_to_remove": costs.qty_to_remove,
+                "material_cost": costs.material_cost,
+                "reason": payload["reason"],
+                "source": reason["source"] if reason else None,
+                "colour": payload["colour"],
+                "door_type": payload["door_type"],
+                "work_centre": payload["work_centre"],
+                "notes": (payload.get("notes") or "").strip() or None,
+                "entered_by_user_id": user_id,
+            },
+        )
+        return cur.fetchone()
+
+
+def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) -> list[dict]:
+    filters = filters or {}
+    clauses, params = [], {}
+
+    if filters.get("year"):
+        clauses.append("EXTRACT(YEAR FROM rework_date) = %(year)s")
+        params["year"] = int(filters["year"])
+    if filters.get("month"):
+        clauses.append("EXTRACT(MONTH FROM rework_date) = %(month)s")
+        params["month"] = int(filters["month"])
+    if filters.get("door_type"):
+        clauses.append("door_type = %(door_type)s")
+        params["door_type"] = filters["door_type"]
+    if filters.get("reason"):
+        clauses.append("reason = %(reason)s")
+        params["reason"] = filters["reason"]
+    if filters.get("work_centre"):
+        clauses.append("work_centre = %(work_centre)s")
+        params["work_centre"] = filters["work_centre"]
+    if filters.get("so_number"):
+        clauses.append("so_number ILIKE %(so_number)s")
+        params["so_number"] = f"%{filters['so_number']}%"
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params["limit"] = limit
+    params["offset"] = offset
+
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT e.*, u.username AS entered_by "
+            f"FROM rework_events e LEFT JOIN users u ON u.id = e.entered_by_user_id "
+            f"{where} ORDER BY e.rework_date DESC, e.id DESC LIMIT %(limit)s OFFSET %(offset)s",
+            params,
+        )
+        return cur.fetchall()
+
+
+def list_available_years() -> list[int]:
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT EXTRACT(YEAR FROM rework_date)::int AS y FROM rework_events ORDER BY y DESC"
+        )
+        return [r["y"] for r in cur.fetchall()]
+
+
+def get_event(event_id: int) -> dict | None:
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT e.*, u.username AS entered_by "
+            "FROM rework_events e LEFT JOIN users u ON u.id = e.entered_by_user_id "
+            "WHERE e.id = %s",
+            (event_id,),
+        )
+        return cur.fetchone()
+
+
+# ── Scrap write-off (Doors) ──────────────────────────────────────────────
+#
+# Doors equivalent of services.turret.scrap_summary_by_week -- same idea
+# (group what's been logged by the week it's due for write-off in ERP),
+# different source and a different week rule. The Turret tracker has its
+# own pre-entered `scrap_week` per row (a human wrote it down); rework_events
+# has no such column -- so the write-off week is *derived* here, one ISO
+# week after the week the row was **entered** (`entered_date`), not the week
+# the rework/defect itself happened (`rework_date`). Confirmed live
+# 2026-10-21 against a real mismatch: three rows all sharing the same
+# rework_date (2026-09-30) but different entered_dates (one on 2026-10-02,
+# two on 2026-10-13) only had the first one actually written off in week 41
+# -- the other two didn't show up until week 43, i.e. one week after *their*
+# entered_date, not after the shared rework_date. Matches what the
+# department confirmed is the real process: the write-off batch runs off
+# whatever's been entered into the tracker that week, not off when the
+# defect physically occurred -- a row logged late naturally gets swept up
+# whenever it's actually entered, same as their own spreadsheet. Also
+# matches the old workbook's own "Scrap Write Off Pivot" tab: write-off
+# dates are always a Monday (e.g. week 40 -> 2026-10-05), i.e. the Monday of
+# the week after the one being written off -- "scrap every Monday for last
+# week", same note as the Turret tab's own Pivot sheet carries.
+#
+# Only `type = 'Replace Part'` rows appear here (2026-10-21, per the
+# department: Rework/Recoat never gets written off in SyteLine at all, so
+# including it overstated "ready for write-off"). `qty_to_remove` is only
+# non-NULL when the row's product_code matched a real item with a `rule` set
+# (services.costing.compute_costs) -- Scrap Entire Door rows use
+# product_code "DOOR", which isn't a real item, so they fall out of this
+# naturally too, on top of the type filter.
+#
+# Sheet items (erp_reconciliation.sheet_item_codes()) are excluded -- they're
+# Turret's raw sheet-stock, already reconciled on that tab, so they'd
+# otherwise double-count across both tabs. Plank items (e.g. 00392.215.01)
+# deliberately stay IN this view -- the department confirmed those belong
+# here, unlike Sheet (2026-10-21).
+#
+# ISO week numbers repeat every year, so grouping/filtering must pair a week
+# with its ISO year (EXTRACT(ISOYEAR ...), not plain YEAR -- they can differ
+# at year boundaries) to avoid merging e.g. week 1 of 2025 with week 1 of
+# 2026.
+
+_WRITEOFF_DATE_EXPR = "(date_trunc('week', entered_date) + interval '7 days')::date"
+
+
+def scrap_writeoff_summary(write_off_week: int | None = None, write_off_year: int | None = None) -> list[dict]:
+    clauses, params = [], {
+        "sheet_items": list(erp_reconciliation.sheet_item_codes()),
+        "test_so": test_data.SO_NUMBER,
+    }
+    if write_off_week is not None:
+        clauses.append("EXTRACT(WEEK FROM write_off_date)::int = %(week)s")
+        params["week"] = write_off_week
+    if write_off_year is not None:
+        clauses.append("EXTRACT(ISOYEAR FROM write_off_date)::int = %(year)s")
+        params["year"] = write_off_year
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            WITH scoped AS (
+                SELECT product_code, qty_to_remove, so_number, {_WRITEOFF_DATE_EXPR} AS write_off_date
+                FROM rework_events
+                WHERE qty_to_remove IS NOT NULL AND type = 'Replace Part'
+                  AND NOT (product_code = ANY(%(sheet_items)s))
+            )
+            SELECT
+                s.write_off_date,
+                EXTRACT(ISOYEAR FROM s.write_off_date)::int AS write_off_year,
+                EXTRACT(WEEK FROM s.write_off_date)::int AS write_off_week,
+                EXTRACT(WEEK FROM s.write_off_date - interval '7 days')::int AS from_week,
+                s.product_code, i.description,
+                SUM(s.qty_to_remove) AS total_qty,
+                COUNT(*) AS line_count,
+                BOOL_OR(LOWER(s.so_number) = LOWER(%(test_so)s)) AS includes_test_data
+            FROM scoped s
+            LEFT JOIN items i ON i.part_number = s.product_code
+            {where}
+            GROUP BY s.write_off_date, s.product_code, i.description
+            ORDER BY s.write_off_date DESC, s.product_code
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+
+    erp_actuals = erp_reconciliation.erp_actuals_by_item_week()
+    for row in rows:
+        match = erp_actuals.get((row["product_code"], row["write_off_year"], row["write_off_week"]))
+        row["erp_qty"] = match["qty"] if match else None
+        row["erp_cost"] = match["cost"] if match else None
+    return rows
+
+
+def list_available_writeoff_weeks() -> list[dict]:
+    """Distinct (write_off_year, write_off_week) pairs with real data, most
+    recent first -- for the write-off week filter dropdown."""
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT DISTINCT
+                EXTRACT(ISOYEAR FROM write_off_date)::int AS write_off_year,
+                EXTRACT(WEEK FROM write_off_date)::int AS write_off_week
+            FROM (
+                SELECT {_WRITEOFF_DATE_EXPR} AS write_off_date
+                FROM rework_events WHERE qty_to_remove IS NOT NULL
+            ) s
+            ORDER BY write_off_year DESC, write_off_week DESC
+            """
+        )
+        return cur.fetchall()

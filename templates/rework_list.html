@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Rework log · Doors Rework{% endblock %}
+{% block content %}
+
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="rework_log">Rework log</button>
+  <button class="tab-btn" data-tab="write_off">Scrap write-off</button>
+</div>
+
+<!-- ───────────────────────── Rework log ───────────────────────── -->
+<div class="tab-panel active" data-panel="rework_log">
+  <form class="card" method="get" style="margin-bottom:16px;">
+    <div class="filters">
+      <div class="field">
+        <label for="month">Month</label>
+        <select id="month" name="month">
+          <option value="">All</option>
+          {% for m in range(1, 13) %}
+          <option value="{{ m }}" {% if filters.month == m|string %}selected{% endif %}>
+            {{ ["January","February","March","April","May","June","July","August","September","October","November","December"][m-1] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="year">Year</label>
+        <select id="year" name="year">
+          <option value="">All</option>
+          {% for y in years %}<option value="{{ y }}" {% if filters.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="reason">Reason</label>
+        <select id="reason" name="reason">
+          <option value="">All</option>
+          {% for r in reasons %}<option value="{{ r }}" {% if filters.reason == r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="door_type">Door type</label>
+        <select id="door_type" name="door_type">
+          <option value="">All</option>
+          {% for dt in door_types %}<option value="{{ dt }}" {% if filters.door_type == dt %}selected{% endif %}>{{ dt }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="work_centre">Work centre</label>
+        <select id="work_centre" name="work_centre">
+          <option value="">All</option>
+          {% for wc in work_centres %}<option value="{{ wc }}" {% if filters.work_centre == wc %}selected{% endif %}>{{ wc }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="so_number">SO number</label>
+        <input type="text" id="so_number" name="so_number" value="{{ filters.so_number or '' }}" placeholder="S000…">
+      </div>
+      <button type="submit" class="btn-primary" style="width:auto; padding:0 20px;">Filter</button>
+      {% if filters.year or filters.month or filters.reason or filters.door_type or filters.work_centre or filters.so_number %}
+      <a href="{{ url_for('rework.list_page') }}" class="btn-text">Clear filters</a>
+      {% endif %}
+    </div>
+  </form>
+
+  {% if events %}
+  <div class="card">
+    <div class="table-scroll">
+      <table class="rework-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Type</th><th>SO number</th><th>Product code</th><th>Qty</th>
+            <th>Reason</th><th>Colour</th><th>Door type</th><th>Work centre</th>
+            <th>Material</th><th>Entered by</th><th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in events %}
+          <tr {% if e.so_number and e.so_number|lower == test_so_number|lower %}class="test-order-row"{% endif %}>
+            <td class="col-nowrap">{{ e.rework_date.strftime("%d %b %Y") }}</td>
+            <td class="col-nowrap">
+              {% if e.type == 'Rework / Recoat' %}<span class="severity-pill good">{{ e.type }}</span>
+              {% elif e.type == 'Replace Part' %}<span class="severity-pill warn">{{ e.type }}</span>
+              {% else %}<span class="severity-pill crit">{{ e.type }}</span>{% endif %}
+            </td>
+            <td class="col-nowrap">
+              {{ e.so_number }}
+              {% if e.so_number and e.so_number|lower == test_so_number|lower %}<span class="test-badge">TEST</span>{% endif %}
+            </td>
+            <td class="col-nowrap">{{ e.product_code }}</td>
+            <td class="col-right">{{ e.quantity }}</td>
+            <td class="col-wide">{{ e.reason }}</td>
+            <td class="col-nowrap">{{ e.colour }}</td>
+            <td class="col-nowrap">{{ e.door_type }}</td>
+            <td class="col-nowrap">{{ e.work_centre }}</td>
+            <td class="col-nowrap col-right">{{ "$%.2f"|format(e.material_cost) if e.material_cost is not none else "—" }}</td>
+            <td class="col-nowrap">{{ e.entered_by or e.entered_by_name or "—" }}</td>
+            <td class="col-wide">{{ e.notes or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty-state">
+    <p>No rework entries match these filters yet.</p>
+    {% if current_user and current_user.role in ('operator', 'admin') %}
+      <p><a href="{{ url_for('rework.new_page') }}">Log the first one</a></p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- ───────────────────────── Scrap write-off ───────────────────────── -->
+<div class="tab-panel" data-panel="write_off">
+  <div class="card sticky-filter">
+    <h2>Scrap write-off, by week</h2>
+    <p class="hint">
+      Rework logged in one week is written off in SyteLine the <strong>following</strong> week (ERP uses
+      that later week's date) -- e.g. logged in week 42 gets written off in week 43. "From week" below shows
+      where it was actually logged. Only Replace Part entries have a "qty to remove" to write off this way --
+      Rework/Recoat isn't written off in SyteLine at all, and Scrap Entire Door isn't part-based, so neither
+      appears here.
+    </p>
+    <form method="get" id="writeoffFilterForm" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+      <label for="write_off_period" style="font-size:.85rem; font-weight:600;">Write-off week</label>
+      <select id="write_off_period">
+        <option value="">All weeks</option>
+        {% for w in available_weeks %}
+        <option value="{{ w.write_off_year }}-{{ w.write_off_week }}"
+          {% if write_off_year == w.write_off_year|string and write_off_week == w.write_off_week|string %}selected{% endif %}>
+          Week {{ w.write_off_week }}, {{ w.write_off_year }}
+        </option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="write_off_year" id="writeOffYearHidden" value="{{ write_off_year or '' }}">
+      <input type="hidden" name="write_off_week" id="writeOffWeekHidden" value="{{ write_off_week or '' }}">
+    </form>
+  </div>
+
+  {% if writeoff_rows %}
+  <div class="card" style="margin-top:16px;">
+    <div class="table-scroll">
+      <table class="rework-table">
+        <thead>
+          <tr>
+            <th>Write-off week</th><th>Product code</th><th>Description</th><th>From week</th>
+            <th>Replace Part</th><th>Rework/Recoat</th><th>Total (ready for write-off)</th><th>Lines</th><th>ERP actual</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in writeoff_rows %}
+          <tr {% if r.includes_test_data %}class="test-order-row"{% endif %}>
+            <td class="col-nowrap">Week {{ r.write_off_week }}, {{ r.write_off_year }}</td>
+            <td class="col-nowrap">
+              {{ r.product_code }}
+              {% if r.includes_test_data %}<span class="test-badge">TEST</span>{% endif %}
+            </td>
+            <td class="col-wide">{{ r.description or "—" }}</td>
+            <td class="col-nowrap">Week {{ r.from_week }}</td>
+            <td class="col-right">{{ r.replace_part_qty|int if r.replace_part_qty and r.replace_part_qty == r.replace_part_qty|int else (r.replace_part_qty or "—") }}</td>
+            <td class="col-right">{{ r.rework_recoat_qty|int if r.rework_recoat_qty and r.rework_recoat_qty == r.rework_recoat_qty|int else (r.rework_recoat_qty or "—") }}</td>
+            <td class="col-right"><strong>{{ r.total_qty|int if r.total_qty == r.total_qty|int else r.total_qty }}</strong></td>
+            <td class="col-right">{{ r.line_count }}</td>
+            <td class="col-nowrap">
+              {% if r.erp_qty is none %}
+                <span class="badge badge-grey">Not in ERP yet</span>
+              {% elif r.erp_qty == r.total_qty %}
+                <span class="badge badge-green">✓ matches ({{ r.erp_qty|int if r.erp_qty == r.erp_qty|int else r.erp_qty }})</span>
+              {% else %}
+                <span class="badge badge-red">ERP {{ r.erp_qty|int if r.erp_qty == r.erp_qty|int else r.erp_qty }} vs logged {{ r.total_qty|int if r.total_qty == r.total_qty|int else r.total_qty }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin-top:10px;">"ERP actual" is this product code's SyteLine scrap write-off total for that same write-off week (reason_code SCR), synced via Admin. A mismatch isn't necessarily a bug on either side -- it just means what's logged here and what's actually been written off in SyteLine don't currently agree, worth checking.</p>
+  </div>
+  {% else %}
+  <div class="card empty-state" style="margin-top:16px;">
+    <p>No scrap write-off due for this week.</p>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var tabBar = document.getElementById("tabBar");
+  function activateTab(tabKey) {
+    var btn = tabBar.querySelector('.tab-btn[data-tab="' + tabKey + '"]');
+    var panel = document.querySelector('.tab-panel[data-panel="' + tabKey + '"]');
+    if (!btn || !panel) return false;
+    document.querySelectorAll(".tab-btn").forEach(function (b) { b.classList.remove("active"); });
+    document.querySelectorAll(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+    btn.classList.add("active");
+    panel.classList.add("active");
+    return true;
+  }
+  tabBar.addEventListener("click", function (e) {
+    var btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    activateTab(btn.dataset.tab);
+    location.hash = btn.dataset.tab;
+  });
+  if (location.hash) activateTab(location.hash.slice(1));
+
+  var periodSelect = document.getElementById("write_off_period");
+  periodSelect.addEventListener("change", function () {
+    var parts = this.value.split("-");
+    document.getElementById("writeOffYearHidden").value = parts[0] || "";
+    document.getElementById("writeOffWeekHidden").value = parts[1] || "";
+    document.getElementById("writeoffFilterForm").submit();
+  });
+})();
+</script>
+{% endblock %}

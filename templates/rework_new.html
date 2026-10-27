@@ -1,0 +1,482 @@
+{% extends "base.html" %}
+{% block title %}New entry · Doors Rework{% endblock %}
+{% block content %}
+<div class="conn-banner test" id="testOrderBanner" hidden>🧪 TEST ORDER -- this is the fake SO, not a real Sales Order</div>
+<div class="layout">
+  <form class="form-col" id="reworkForm" novalidate>
+
+    <div class="card">
+      <h2>Sales Order</h2>
+      <div class="row3">
+        <div class="field" id="soField">
+          <label for="soNumber">SO number <span class="required-mark">*</span></label>
+          <input type="text" id="soNumber" placeholder="S000XXXXXX" autocomplete="off">
+          <p class="field-error">Required.</p>
+        </div>
+        <div class="field" id="jobNumberField">
+          <label for="jobNumber">Job number</label>
+          <input type="text" id="jobNumber" placeholder="—" autocomplete="off" readonly>
+        </div>
+        <div class="field" id="doorTypeField">
+          <label for="doorType">Door type <span class="required-mark">*</span></label>
+          <select id="doorType">
+            <option value="">Select…</option>
+            {% for dt in door_types %}<option value="{{ dt }}">{{ dt }}</option>{% endfor %}
+          </select>
+          <p class="field-error">Required.</p>
+        </div>
+      </div>
+      <p class="hint" id="soStatus">Start here — this fills in Job Number, Height, Width, Colour, Door Type, and scopes Product Code to this job's real materials.</p>
+    </div>
+
+    <div class="card">
+      <h2>Job &amp; part</h2>
+      <div class="field">
+        <label for="qtyInput">Quantity <span class="required-mark">*</span></label>
+        <div class="stepper" style="max-width:200px;">
+          <button type="button" id="qtyMinus" aria-label="Decrease quantity">−</button>
+          <input type="number" id="qtyInput" value="1" min="1" inputmode="numeric">
+          <button type="button" id="qtyPlus" aria-label="Increase quantity">+</button>
+        </div>
+      </div>
+
+      <div class="field" id="productField">
+        <label for="productInput">Product code <span class="required-mark">*</span></label>
+        <div class="combo" id="productCombo">
+          <input type="text" id="productInput" placeholder="Start typing a part number…" autocomplete="off">
+          <ul class="combo-list" id="productList" hidden></ul>
+        </div>
+        <p class="hint" id="productScopeHint" hidden></p>
+        <div class="item-match" id="itemMatch" hidden></div>
+        <p class="field-error">Required — pick a recognised item or type a code.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Dimensions <span class="optional">mm</span></h2>
+      <div class="row3">
+        <div class="field" id="heightField">
+          <label for="heightInput">Height <span class="required-mark">*</span></label>
+          <input type="number" id="heightInput" inputmode="numeric" placeholder="—">
+          <p class="field-error">Required.</p>
+        </div>
+        <div class="field" id="widthField">
+          <label for="widthInput">Width <span class="required-mark">*</span></label>
+          <input type="number" id="widthInput" inputmode="numeric" placeholder="—">
+          <p class="field-error">Required.</p>
+        </div>
+        <div class="field">
+          <label for="cutLengthInput">Cut length <span class="optional">optional</span></label>
+          <input type="number" id="cutLengthInput" inputmode="numeric" placeholder="—">
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="colourField">
+      <h2>Colour <span class="required-mark">*</span></h2>
+      <div class="combo" id="colourCombo">
+        <input type="text" id="colourInput" placeholder="Search colours…" autocomplete="off">
+        <ul class="combo-list" id="colourList" hidden></ul>
+      </div>
+      <p class="hint" id="colourErpHint" hidden></p>
+      <p class="field-error">Select a colour from the list.</p>
+    </div>
+
+    <div class="card">
+      <h2>What happened</h2>
+
+      <div class="field" id="typeField">
+        <label>Type <span class="required-mark">*</span></label>
+        <div class="segmented" id="typeSeg" role="group" aria-label="Rework type">
+          <button type="button" class="seg-btn" data-sev="good" data-value="Rework / Recoat" aria-pressed="false">
+            <span class="dot"></span>Rework / Recoat</button>
+          <button type="button" class="seg-btn" data-sev="warn" data-value="Replace Part" aria-pressed="false">
+            <span class="dot"></span>Replace Part</button>
+          <button type="button" class="seg-btn" data-sev="crit" data-value="Scrap Entire Door" aria-pressed="false">
+            <span class="dot"></span>Scrap Entire Door</button>
+        </div>
+        <p class="hint" id="typeHint">Choose what happened to the door.</p>
+        <p class="field-error">Pick a type before logging this entry.</p>
+      </div>
+
+      <div class="field" id="reasonField">
+        <label for="reasonInput">Reason <span class="required-mark">*</span></label>
+        <div class="combo" id="reasonCombo">
+          <input type="text" id="reasonInput" placeholder="Search reasons…" autocomplete="off">
+          <ul class="combo-list" id="reasonList" hidden></ul>
+        </div>
+        <span class="chip" id="sourceChip" hidden>Source: <span id="sourceChipText"></span></span>
+        <p class="field-error">Select a reason from the list.</p>
+      </div>
+
+      <div class="field" id="workCentreField">
+        <label for="workCentre">Work centre <span class="required-mark">*</span></label>
+        <select id="workCentre">
+          <option value="">Select…</option>
+          {% for wc in work_centres %}<option value="{{ wc }}">{{ wc }}</option>{% endfor %}
+        </select>
+        <p class="field-error">Required.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Notes <span class="optional">optional</span></h2>
+      <textarea id="notesInput" placeholder="e.g. dropped when removed from the line, dented corner"></textarea>
+    </div>
+
+    <button type="button" class="btn-text" id="clearBtn">Clear form</button>
+  </form>
+
+  <aside class="summary-col">
+    <div class="card summary-card">
+      <h2>Cost preview</h2>
+      <div class="sumrow"><span>Qty to remove</span><strong id="sumQty">—</strong></div>
+      <div class="sumrow"><span>Material cost</span><strong id="sumMaterial">—</strong></div>
+      <div class="sumrow total"><span>Total</span><strong id="sumTotal">—</strong></div>
+      <p class="hint">Calculated from the ERP item master once a product code is recognised.</p>
+      <button type="submit" form="reworkForm" class="btn-primary" id="submitBtn">Log entry</button>
+    </div>
+  </aside>
+</div>
+
+<div class="mobile-bar">
+  <div class="mb-total"><span>Total</span><strong id="sumTotalMobile">—</strong></div>
+  <button type="submit" form="reworkForm" class="btn-primary" id="submitBtnMobile">Log entry</button>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/static/app.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var REASONS = {{ reasons|tojson }};
+  var COLOURS = {{ colours|tojson }};
+
+  var state = { type: null, reason: null, productCode: "", quantity: 1, soOrder: null, jobMaterials: null };
+  // Bumped by resetForm() so a cost-preview/product-search fetch already in
+  // flight when the form is cleared can't repopulate the item-match box or
+  // product list after the fact -- each async callback checks its own
+  // snapshot against the current value before touching the DOM.
+  var formGeneration = 0;
+
+  // ── Type segmented control ──
+  var typeSeg = document.getElementById("typeSeg");
+  var TYPE_HINTS = {
+    "Rework / Recoat": "Flat $132 rework charge, no material cost.",
+    "Replace Part": "Costed from the matched part’s ERP standard cost.",
+    "Scrap Entire Door": "Whole door written off — product code is forced to DOOR."
+  };
+  Array.prototype.forEach.call(typeSeg.children, function (btn) {
+    btn.addEventListener("click", function () {
+      state.type = btn.dataset.value;
+      Array.prototype.forEach.call(typeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
+      btn.setAttribute("aria-pressed", "true");
+      document.getElementById("typeHint").textContent = TYPE_HINTS[state.type];
+      setFieldValid("typeField", true);
+      // Scrap Entire Door always costs the whole door, never a specific part
+      // -- force DOOR even over a part already picked for Rework/Replace.
+      // Switching back away from Scrap Entire Door clears that forced DOOR
+      // back out so the operator has to pick the real part Rework/Replace
+      // needs, instead of silently submitting against DOOR.
+      if (state.type === "Scrap Entire Door") {
+        productInput.value = "DOOR";
+        matchProduct("DOOR");
+      } else if (productInput.value === "DOOR") {
+        productInput.value = "";
+        matchProduct("");
+      }
+      recalc();
+    });
+  });
+
+  // ── Reason combo ──
+  var reasonInput = document.getElementById("reasonInput");
+  makeCombo(reasonInput, document.getElementById("reasonList"), REASONS,
+    function (r) { return r.reason; }, function (r) { return r.source; },
+    function (r) {
+      reasonInput.value = r.reason;
+      state.reason = r.reason;
+      var chip = document.getElementById("sourceChip");
+      chip.hidden = false;
+      document.getElementById("sourceChipText").textContent = r.source;
+      setFieldValid("reasonField", true);
+    });
+
+  // ── Colour combo ──
+  var colourInput = document.getElementById("colourInput");
+  makeCombo(colourInput, document.getElementById("colourList"), COLOURS,
+    function (c) { return c; }, null,
+    function (c) { colourInput.value = c; setFieldValid("colourField", true); });
+
+  // ── Product code combo (server-backed search) ──
+  var productInput = document.getElementById("productInput");
+  var productList = document.getElementById("productList");
+  var productCombo = makeCombo(productInput, productList, [],
+    function (p) { return p.part_number; }, function (p) { return p.description; },
+    function (p) { productInput.value = p.part_number; matchProduct(p.part_number); });
+
+  var fetchProducts = debounce(function (q) {
+    if (q.length < 2) { productCombo.refresh([]); return; }
+    var gen = formGeneration;
+    fetch("/api/items/search?q=" + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(function (items) {
+        if (gen !== formGeneration) return;
+        productCombo.refresh(items);
+        productInput.dispatchEvent(new Event("input"));
+      });
+  }, 250);
+  productInput.addEventListener("input", function () {
+    state.productCode = productInput.value;
+    // Once a Sales Order has resolved, the combo is scoped to that job's own
+    // materials (see applyOrder below) -- makeCombo already filters locally
+    // against whatever list productCombo.refresh() was last given, so typing
+    // here just needs to skip the full-item-master server search, not redo it.
+    if (!state.jobMaterials) fetchProducts(productInput.value);
+    recalc();
+  });
+
+  function matchProduct(code) {
+    state.productCode = code;
+    recalc();
+  }
+
+  // ── Sales Order lookup: autofills Height/Width/Colour/Door Type and scopes
+  //    Product Code to this job's real materials (services/erp_lookup.py) ──
+  var soInput = document.getElementById("soNumber");
+  var soStatus = document.getElementById("soStatus");
+  var TEST_SO_NUMBER = {{ test_so_number|tojson }};
+  var testOrderBanner = document.getElementById("testOrderBanner");
+
+  function updateTestBanner() {
+    testOrderBanner.hidden = soInput.value.trim().toLowerCase() !== TEST_SO_NUMBER.toLowerCase();
+  }
+  soInput.addEventListener("input", updateTestBanner);
+  updateTestBanner();
+
+  function lookupOrder() {
+    var so = soInput.value.trim();
+    if (!so) { soStatus.textContent = ""; document.getElementById("jobNumber").value = ""; return; }
+    soStatus.textContent = "Looking up order…";
+    var gen = formGeneration;
+    fetch("/api/orders/" + encodeURIComponent(so))
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        if (gen !== formGeneration) return;
+        if (!res.ok || !res.data.ok) {
+          soStatus.textContent = (res.data && res.data.error) || "Order not found — you can still fill this in manually.";
+          document.getElementById("jobNumber").value = "";
+          return;
+        }
+        applyOrder(res.data.order);
+      })
+      .catch(function () {
+        if (gen !== formGeneration) return;
+        soStatus.textContent = "Couldn't reach the server to look up this order.";
+      });
+  }
+
+  function applyOrder(order) {
+    state.soOrder = order;
+    state.jobMaterials = order.materials || [];
+    document.getElementById("jobNumber").value = order.job_number || "";
+    soStatus.textContent = "Loaded " + (order.job_number || "order")
+      + (state.jobMaterials.length ? " — " + state.jobMaterials.length + " materials" : "");
+
+    if (order.height != null) { heightInput.value = Math.round(Number(order.height)); setFieldValid("heightField", true); }
+    if (order.width != null) { widthInput.value = Math.round(Number(order.width)); setFieldValid("widthField", true); }
+
+    var colourHint = document.getElementById("colourErpHint");
+    if (order.colour_in || order.colour_out) {
+      var colourVal = order.colour_out || order.colour_in;
+      colourInput.value = colourVal;
+      setFieldValid("colourField", true);
+      colourHint.hidden = false;
+      colourHint.textContent = "ERP: In " + (order.colour_in || "—") + " · Out " + (order.colour_out || "—");
+    }
+
+    if (order.door_type) {
+      doorTypeSel.value = order.door_type;
+      setFieldValid("doorTypeField", !!doorTypeSel.value);
+    }
+
+    productCombo.refresh(state.jobMaterials);
+    var scopeHint = document.getElementById("productScopeHint");
+    if (state.jobMaterials.length) {
+      scopeHint.hidden = false;
+      scopeHint.textContent = "Showing this job's " + state.jobMaterials.length + " materials — clear the SO number to search the full item master instead.";
+      // Open the list right away instead of waiting for the operator to find
+      // and click into Product Code themselves -- this is the thing an SO
+      // lookup is mainly for, so make it impossible to miss.
+      document.getElementById("productField").scrollIntoView({ behavior: "smooth", block: "center" });
+      productInput.focus();
+    }
+
+    if (state.type === "Scrap Entire Door") recalc();
+  }
+
+  soInput.addEventListener("blur", lookupOrder);
+  soInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); lookupOrder(); }
+  });
+
+  // ── Door type / work centre ──
+  var doorTypeSel = document.getElementById("doorType"), workCentreSel = document.getElementById("workCentre");
+  doorTypeSel.addEventListener("change", function () { setFieldValid("doorTypeField", !!doorTypeSel.value); });
+  workCentreSel.addEventListener("change", function () { setFieldValid("workCentreField", !!workCentreSel.value); });
+
+  // ── Height / width ──
+  var heightInput = document.getElementById("heightInput"), widthInput = document.getElementById("widthInput");
+  heightInput.addEventListener("input", function () { setFieldValid("heightField", !!heightInput.value.trim()); });
+  widthInput.addEventListener("input", function () { setFieldValid("widthField", !!widthInput.value.trim()); });
+
+  // ── Quantity stepper ──
+  var qtyInput = document.getElementById("qtyInput");
+  function setQty(v) { qtyInput.value = Math.max(1, v); state.quantity = Number(qtyInput.value); recalc(); }
+  document.getElementById("qtyMinus").addEventListener("click", function () { setQty(Number(qtyInput.value) - 1); });
+  document.getElementById("qtyPlus").addEventListener("click", function () { setQty(Number(qtyInput.value) + 1); });
+  qtyInput.addEventListener("input", function () { state.quantity = Math.max(1, Number(qtyInput.value) || 1); recalc(); });
+
+  // ── Cost preview (server-authoritative calc) ──
+  var recalcDebounced = debounce(function () {
+    if (!state.productCode) { renderCosts(null); return; }
+    var gen = formGeneration;
+    var body = { type: state.type, quantity: state.quantity, product_code: state.productCode };
+    // Preview only -- the server never trusts this value on save, it re-derives
+    // the real figure itself live from so_number (see services/rework.py).
+    if (state.type === "Scrap Entire Door" && state.soOrder && state.soOrder.full_door_material_cost != null) {
+      body.full_door_material_cost = state.soOrder.full_door_material_cost;
+    }
+    fetch("/api/cost-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (gen !== formGeneration) return;
+      renderCosts(data);
+    });
+  }, 200);
+  function recalc() { recalcDebounced(); }
+
+  function renderCosts(data) {
+    var box = document.getElementById("itemMatch");
+    var scrapWithJobCost = data && state.type === "Scrap Entire Door" && state.soOrder && data.material_cost != null;
+    if (data && data.matched) {
+      box.hidden = false;
+      box.innerHTML = "<span></span><span></span>";
+      box.children[0].textContent = data.description || "";
+      box.children[1].textContent = data.qty_to_remove != null ? ("Qty to remove " + data.qty_to_remove) : "";
+      setFieldValid("productField", true);
+    } else if (scrapWithJobCost) {
+      box.hidden = false;
+      box.innerHTML = "<span></span><span></span>";
+      box.children[0].textContent = "Full door — every material on " + (state.soOrder.job_number || "the job");
+      box.children[1].textContent = state.jobMaterials ? state.jobMaterials.length + " materials" : "";
+      setFieldValid("productField", true);
+    } else {
+      box.hidden = true;
+    }
+    var hasAny = data && (data.qty_to_remove != null || data.material_cost != null);
+    document.getElementById("sumQty").textContent = data && data.qty_to_remove != null ? data.qty_to_remove : "—";
+    document.getElementById("sumMaterial").textContent = data && data.material_cost != null ? nzd(data.material_cost) : "—";
+    document.getElementById("sumTotal").textContent = hasAny ? nzd(data.total_cost) : "—";
+    document.getElementById("sumTotalMobile").textContent = hasAny ? nzd(data.total_cost) : "—";
+  }
+
+  // ── Validation ──
+  function setFieldValid(id, ok) { document.getElementById(id).classList.toggle("invalid", !ok); }
+  function validate() {
+    var ok = true;
+    if (!state.type) { setFieldValid("typeField", false); ok = false; }
+    if (!state.reason) { setFieldValid("reasonField", false); ok = false; }
+    if (!doorTypeSel.value) { setFieldValid("doorTypeField", false); ok = false; }
+    if (!workCentreSel.value) { setFieldValid("workCentreField", false); ok = false; }
+    if (!document.getElementById("soNumber").value.trim()) { setFieldValid("soField", false); ok = false; }
+    if (!state.productCode.trim()) { setFieldValid("productField", false); ok = false; }
+    if (!colourInput.value.trim()) { setFieldValid("colourField", false); ok = false; }
+    if (!document.getElementById("heightInput").value.trim()) { setFieldValid("heightField", false); ok = false; }
+    if (!document.getElementById("widthInput").value.trim()) { setFieldValid("widthField", false); ok = false; }
+    return ok;
+  }
+
+  // ── Submit / clear ──
+  var form = document.getElementById("reworkForm");
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!validate()) {
+      var firstInvalid = form.querySelector(".invalid input, .invalid select, .invalid .segmented");
+      if (firstInvalid) firstInvalid.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    var submitBtns = [document.getElementById("submitBtn"), document.getElementById("submitBtnMobile")];
+    submitBtns.forEach(function (b) { b.disabled = true; });
+
+    var today = new Date().toISOString().slice(0, 10);
+    fetch("/api/rework-events", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rework_date: today,
+        type: state.type,
+        so_number: document.getElementById("soNumber").value.trim(),
+        product_code: state.productCode.trim(),
+        quantity: state.quantity,
+        height_mm: document.getElementById("heightInput").value || null,
+        width_mm: document.getElementById("widthInput").value || null,
+        cut_length_mm: document.getElementById("cutLengthInput").value || null,
+        reason: state.reason,
+        colour: colourInput.value.trim(),
+        door_type: doorTypeSel.value,
+        work_centre: workCentreSel.value,
+        notes: document.getElementById("notesInput").value.trim()
+      })
+    }).then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) {
+        submitBtns.forEach(function (b) { b.disabled = false; });
+        if (!res.ok) { showToast("Couldn't save — check the highlighted fields.", true); return; }
+        showToast("Entry logged.");
+        resetForm();
+      })
+      .catch(function () {
+        submitBtns.forEach(function (b) { b.disabled = false; });
+        showToast("Couldn't reach the server — try again.", true);
+      });
+  });
+
+  document.getElementById("clearBtn").addEventListener("click", resetForm);
+
+  function resetForm() {
+    formGeneration++;
+    state = { type: null, reason: null, productCode: "", quantity: 1, soOrder: null, jobMaterials: null };
+    form.reset();
+    Array.prototype.forEach.call(typeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
+    document.getElementById("typeHint").textContent = "Choose what happened to the door.";
+    document.getElementById("sourceChip").hidden = true;
+    document.getElementById("itemMatch").hidden = true;
+    document.getElementById("soStatus").textContent = "";
+    document.getElementById("jobNumber").value = "";
+    document.getElementById("colourErpHint").hidden = true;
+    document.getElementById("productScopeHint").hidden = true;
+    productCombo.refresh([]);
+    ["typeField", "reasonField", "doorTypeField", "workCentreField", "soField", "productField", "colourField", "heightField", "widthField"]
+      .forEach(function (id) { setFieldValid(id, true); });
+    renderCosts(null);
+    // form.reset() doesn't fire "input" events, so the TEST ORDER banner
+    // (driven by one) is left stale otherwise -- same bug fixed on the
+    // Turret form 2026-10-22.
+    updateTestBanner();
+  }
+
+  var toastTimer;
+  function showToast(msg, isError) {
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = "toast"; }, 3000);
+  }
+
+  renderCosts(null);
+})();
+</script>
+{% endblock %}
