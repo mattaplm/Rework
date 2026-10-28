@@ -5,6 +5,7 @@
 <div class="page-header"><h1>📥 Import from Excel</h1></div>
 
 <div class="card">
+  <h2 style="margin-top:0;">Rework workbook</h2>
   <p class="hint">
     Upload the rework workbook (the one with the <code>REWORK</code> sheet) at any time
     while it's still in parallel use. Already-imported rows are detected and skipped
@@ -12,6 +13,7 @@
   </p>
 
   <form method="post" enctype="multipart/form-data" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+    <input type="hidden" name="import_type" value="rework">
     <input type="file" name="file" accept=".xlsx" required>
     <button type="submit" class="btn-sm accent">Import</button>
   </form>
@@ -39,6 +41,58 @@
   <p class="hint" style="margin-top:12px;">A sample of skipped rows (missing a required field — date, SO number, product code, type, reason, colour, door type or work centre):</p>
   <ul class="hint">
     {% for ex in result.invalid_examples %}<li>{{ ex }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:20px;">
+  <h2 style="margin-top:0;">Turret Sheet Audit</h2>
+  <p class="hint">
+    Upload one of the standalone <code>Turret Sheet Audit YYYY.xlsx</code> workbooks
+    (2024/2025/2026) — not the combined rework workbook, which has its own separate
+    Turret tab that isn't imported. Scrap-only rows are kept; rows with nothing scrapped
+    are skipped by design. Safe to re-upload — already-imported rows are detected and
+    skipped automatically.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+    <input type="hidden" name="import_type" value="turret">
+    <input type="file" name="file" accept=".xlsx" required>
+    <select name="layout">
+      <option value="current" selected>2025 / 2026 layout</option>
+      <option value="2024">2024 layout (no Week column)</option>
+    </select>
+    <button type="submit" class="btn-sm accent">Import</button>
+  </form>
+
+  {% if turret_error %}
+  <p style="color:var(--crit); margin-top:14px;">{{ turret_error }}</p>
+  {% endif %}
+
+  {% if turret_result %}
+  <div class="admin-grid" style="margin-top:18px;">
+    <div class="stat-tile">
+      <div class="stat-label">Inserted</div>
+      <div class="stat-value">{{ turret_result.inserted }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-label">Already imported</div>
+      <div class="stat-value">{{ turret_result.skipped_duplicate }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-label">Skipped (no scrap)</div>
+      <div class="stat-value">{{ turret_result.skipped_not_scrap }}</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-label">Skipped (invalid)</div>
+      <div class="stat-value">{{ turret_result.skipped_invalid }}</div>
+    </div>
+  </div>
+  {% if turret_result.invalid_examples %}
+  <p class="hint" style="margin-top:12px;">A sample of skipped rows (date, week, type, sales_number, job_number):</p>
+  <ul class="hint">
+    {% for ex in turret_result.invalid_examples %}<li>{{ ex }}</li>{% endfor %}
   </ul>
   {% endif %}
   {% endif %}
