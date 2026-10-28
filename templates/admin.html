@@ -246,6 +246,7 @@
     </table>
     <form class="inline-form" data-table="{{ table }}" data-form="named">
       <input type="text" name="name" placeholder="New {{ label|lower }} name" required>
+      <input type="number" name="sort_order" value="{{ (items|map(attribute='sort_order')|max|default(0, true) or 0) + 1 }}" title="Sort order" style="width:80px;">
       <button type="submit" class="btn-sm accent">Add {{ label|lower }}</button>
     </form>
     <p class="hint" style="margin-top:10px;">Renaming also updates every past entry that used the old name — it's a rename everywhere, not a new option alongside the old one. Sort order controls the list here and in the entry form's dropdown (lowest first); ties break alphabetically.</p>
@@ -639,7 +640,8 @@
       e.preventDefault();
       var table = form.dataset.table;
       var name = form.querySelector('[name="name"]').value.trim();
-      post("/api/admin/" + table, { name: name }).then(function (res) {
+      var sortOrder = form.querySelector('[name="sort_order"]').value;
+      post("/api/admin/" + table, { name: name, sort_order: sortOrder }).then(function (res) {
         if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
       });
     });

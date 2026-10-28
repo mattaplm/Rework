@@ -256,10 +256,16 @@ def api_update_reason(reason_id: int):
 @bp.route("/api/admin/<any(work_centres):table>", methods=["POST"])
 @role_required("admin")
 def api_create_named(table: str):
-    name = str((request.get_json(force=True, silent=True) or {}).get("name", "")).strip()
+    data = request.get_json(force=True, silent=True) or {}
+    name = str(data.get("name", "")).strip()
     if not name:
         return jsonify({"ok": False, "error": "Name is required"}), 400
-    admin_data.create_named(table, name)
+    raw_order = str(data.get("sort_order", "")).strip()
+    try:
+        sort_order = int(raw_order) if raw_order else None
+    except ValueError:
+        return jsonify({"ok": False, "error": "Sort order must be a whole number"}), 400
+    admin_data.create_named(table, name, sort_order)
     audit.log(_actor(), f"{table}.create", table, name)
     return jsonify({"ok": True})
 

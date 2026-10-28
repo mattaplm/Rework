@@ -81,10 +81,16 @@ def list_named_all(table: str) -> list[dict]:
         return cur.fetchall()
 
 
-def create_named(table: str, name: str) -> None:
+def create_named(table: str, name: str, sort_order: int | None = None) -> None:
+    """`sort_order` defaults to one past the current highest, so a new row
+    lands at the end of the list instead of tying at 0."""
     table = _check_table(table)
     with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute(f"INSERT INTO {table} (name) VALUES (%s)", (name.strip(),))
+        if sort_order is None:
+            cur.execute(f"SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM {table}")
+            sort_order = cur.fetchone()["n"]
+        cur.execute(f"INSERT INTO {table} (name, sort_order) VALUES (%s, %s)",
+                    (name.strip(), sort_order))
 
 
 def set_named_active(table: str, name: str, active: bool) -> None:
