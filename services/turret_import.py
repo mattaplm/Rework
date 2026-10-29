@@ -26,6 +26,7 @@ one shared scrap code/comments/week/year for the row.
 from __future__ import annotations
 
 import hashlib
+from datetime import date, datetime
 from dataclasses import dataclass, field
 
 import openpyxl
@@ -83,10 +84,20 @@ def _int(v) -> int | None:
     return int(v) if isinstance(v, (int, float)) else None
 
 
+def _date(v):
+    """Only a real date/datetime cell counts. A stray number typed into a date
+    column (a literal 29 turned up in 2024's Scrap Date, 15 in another) used to
+    be rejected by Postgres's DATE type; SQLite stores anything, so it has to be
+    refused here instead."""
+    if isinstance(v, datetime):
+        return v.date()
+    return v if isinstance(v, date) else None
+
+
 def _clean(row: tuple) -> dict | None:
     get = lambda key: row[COL[key]]  # noqa: E731
     values = {
-        "event_date": get("date"),
+        "event_date": _date(get("date")),
         "week_num": _int(get("week")),
         "door_type": _str(get("type")),
         "sales_number": _str(get("sales_number")),
@@ -98,9 +109,9 @@ def _clean(row: tuple) -> dict | None:
         "variation": _str(get("variation")),
         "comments": _str(get("comments")),
         "scrap_code": _str(get("scrap_code")),
-        "scrap_date_a": get("scrap_date_a"), "scrap_sheet_a": _str(get("scrap_sheet_a")), "scrap_qty_a": _num(get("scrap_qty_a")),
-        "scrap_date_b": get("scrap_date_b"), "scrap_sheet_b": _str(get("scrap_sheet_b")), "scrap_qty_b": _num(get("scrap_qty_b")),
-        "scrap_date_c": get("scrap_date_c"), "scrap_sheet_c": _str(get("scrap_sheet_c")), "scrap_qty_c": _num(get("scrap_qty_c")),
+        "scrap_date_a": _date(get("scrap_date_a")), "scrap_sheet_a": _str(get("scrap_sheet_a")), "scrap_qty_a": _num(get("scrap_qty_a")),
+        "scrap_date_b": _date(get("scrap_date_b")), "scrap_sheet_b": _str(get("scrap_sheet_b")), "scrap_qty_b": _num(get("scrap_qty_b")),
+        "scrap_date_c": _date(get("scrap_date_c")), "scrap_sheet_c": _str(get("scrap_sheet_c")), "scrap_qty_c": _num(get("scrap_qty_c")),
         "scrap_comments": _str(get("scrap_comments")),
         "scrap_week": _int(get("scrap_week")),
         "scrap_year": _int(get("scrap_year")),
@@ -147,8 +158,8 @@ def _clean_2024(row: tuple) -> dict | None:
     has scrap recorded on that row -- the source never recorded a more
     specific date than that, so there's nothing more precise to assign."""
     get = lambda key: row[COL_2024[key]]  # noqa: E731
-    event_date = get("date")
-    shared_scrap_date = get("scrap_date")
+    event_date = _date(get("date"))
+    shared_scrap_date = _date(get("scrap_date"))
     values = {
         "event_date": event_date,
         "week_num": event_date.isocalendar()[1] if hasattr(event_date, "isocalendar") else None,

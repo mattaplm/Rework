@@ -37,7 +37,7 @@ def _row(cursor, values):
         key = column[0]
         if value is not None:
             if key in _DATES:
-                value = date.fromisoformat(value[:10])
+                value = _parse_day(value)
             elif key in _TIMES:
                 value = datetime.fromisoformat(value)
                 if value.tzinfo is None:
@@ -50,25 +50,36 @@ def _row(cursor, values):
     return result
 
 
-def _date_part(part, value):
-    if value is None:
+def _parse_day(value):
+    """None for NULL or anything that isn't an ISO date (SQLite doesn't
+    type-check columns the way Postgres DATE does), so one junk cell can't
+    crash a whole query."""
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
         return None
-    day = date.fromisoformat(value[:10])
+
+
+def _date_part(part, value):
+    day = _parse_day(value)
+    if day is None:
+        return None
     return {"year": day.year, "month": day.month,
             "week": day.isocalendar().week, "isoyear": day.isocalendar().year}[part.lower()]
 
 
 def _week_start(value):
-    if value is None:
+    day = _parse_day(value)
+    if day is None:
         return None
-    day = date.fromisoformat(value[:10])
     return (day - timedelta(days=day.weekday())).isoformat()
 
 
 def _date_shift(value, days):
-    if value is None:
+    day = _parse_day(value)
+    if day is None:
         return None
-    return (date.fromisoformat(value[:10]) + timedelta(days=days)).isoformat()
+    return (day + timedelta(days=days)).isoformat()
 
 
 class _SortedArray:
