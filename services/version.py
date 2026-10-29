@@ -1,8 +1,8 @@
 """Which build is running, shown on the Admin page.
 
-Reads the git commit straight out of `.git` (no `git` binary needed -- the
-Docker image doesn't install one). `APP_VERSION` in the environment wins if
-set, for deployments that ship without a `.git` folder.
+`REWORK_REVISION` (set by the deployment, same value /health reports) wins;
+otherwise reads the git commit straight out of `.git` for local dev (no `git`
+binary needed).
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ def _read_git_commit() -> str | None:
 
 @lru_cache(maxsize=1)
 def get_version() -> str:
-    explicit = os.environ.get("APP_VERSION", "").strip()
+    explicit = os.environ.get("REWORK_REVISION", "").strip()
     if explicit:
-        return explicit
+        return explicit[:7]
     commit = _read_git_commit()
     return commit[:7] if commit else "unknown"
