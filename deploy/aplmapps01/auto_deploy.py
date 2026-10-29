@@ -37,6 +37,20 @@ def persist_image(env_file, image):
     atomic_write(env_file, "\n".join([*lines, f"REWORK_IMAGE={image}", ""]))
 
 
+def unpack_source(archive, source):
+    source.mkdir()
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(source, filter="data")
+    # The data filter leaves directory modes to umask (077 for private host
+    # state). Docker COPY preserves those modes but makes files root-owned,
+    # so the non-root app needs readable/traversable source directories.
+    # The enclosing temporary release directory remains private on the host.
+    source.chmod(0o755)
+    for path in source.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o755)
+
+
 def deploy(root, state):
     if (state / "paused").exists():
         return
@@ -59,9 +73,7 @@ def deploy(root, state):
             run("git", "-C", str(repository), "archive", "--format=tar",
                 f"--output={archive}", revision)
             source = release / "source"
-            source.mkdir()
-            with tarfile.open(archive) as bundle:
-                bundle.extractall(source, filter="data")
+            unpack_source(archive, source)
             # main originally contained only PostgreSQL support. Never deploy it
             # over the hosted SQLite app before the hosting changes are published.
             for required in ("sqlite_db.py", "backup_sqlite.py", ".dockerignore",

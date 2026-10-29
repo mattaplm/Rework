@@ -1,5 +1,7 @@
 import importlib.util
+import os
 from pathlib import Path
+import stat
 import subprocess
 import tarfile
 
@@ -11,6 +13,27 @@ spec = importlib.util.spec_from_file_location(
 auto_deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(auto_deploy)
 REVISION = "a" * 40
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permissions")
+def test_extracted_source_is_readable_under_private_host_umask(tmp_path):
+    original = tmp_path / "original"
+    (original / "services").mkdir(parents=True)
+    (original / "services/scheduled_sync.py").write_text("# public app source\n")
+    archive = tmp_path / "source.tar"
+    with tarfile.open(archive, "w") as bundle:
+        bundle.add(original, arcname=".")
+    source = tmp_path / "release/source"
+    old_umask = os.umask(0o077)
+    try:
+        source.parent.mkdir()
+        auto_deploy.unpack_source(archive, source)
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(source.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(source.stat().st_mode) == 0o755
+    assert stat.S_IMODE((source / "services").stat().st_mode) == 0o755
+    assert (source / "services/scheduled_sync.py").stat().st_mode & stat.S_IROTH
 
 
 @pytest.fixture
