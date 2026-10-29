@@ -51,6 +51,8 @@ def lookup_order(so_number: str) -> dict | None:
         "colour_in": reference_data.get_colour_by_code(row.get("colour_in_code")),
         "colour_out": reference_data.get_colour_by_code(row.get("colour_out_code")),
         "door_type": reference_data.get_door_type_for_cpq_code(row.get("cpq_door_code")),
+        "cpq_door_code": row.get("cpq_door_code"),
+        "door_pieces": reference_data.get_door_pieces(row.get("cpq_door_code")),
         "due_date": row.get("due_date"),
         "qty_ordered": row.get("qty_ordered"),
         "materials": materials,

@@ -121,3 +121,14 @@ def get_door_type_for_cpq_code(cpq_code: str | None) -> str | None:
         cur.execute("SELECT family_name FROM cpq_door_codes WHERE cpq_code = %s AND active", (cpq_code.strip().upper(),))
         row = cur.fetchone()
         return row["family_name"] if row else None
+
+
+def get_door_pieces(cpq_code: str | None) -> dict | None:
+    """{"Stile": n|None, "Rail": n|None} for a CPQ door code (None = not set
+    yet, 0 = the door has none), or None if the code isn't mapped."""
+    if not cpq_code:
+        return None
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT stile_pieces, rail_pieces FROM cpq_door_codes WHERE cpq_code = %s", (cpq_code.strip().upper(),))
+        row = cur.fetchone()
+    return {"Stile": row["stile_pieces"], "Rail": row["rail_pieces"]} if row else None

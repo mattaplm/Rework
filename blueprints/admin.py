@@ -343,8 +343,17 @@ def api_save_cpq_door_code():
     description = str(data.get("description", "")).strip()
     if not new_code or not family_name:
         return jsonify({"ok": False, "error": "Code and family name are required"}), 400
-    admin_data.save_cpq_door_code(old_code, new_code, family_name, description)
-    audit.log(_actor(), "door_code.save", "door_code", new_code, {"old_code": old_code, "family_name": family_name, "description": description})
+    pieces = {}
+    for key in ("stile_pieces", "rail_pieces"):
+        raw = str(data.get(key) if data.get(key) is not None else "").strip()
+        try:
+            pieces[key] = int(raw) if raw else None
+        except ValueError:
+            return jsonify({"ok": False, "error": "Pieces must be a whole number"}), 400
+        if pieces[key] is not None and pieces[key] < 0:
+            return jsonify({"ok": False, "error": "Pieces can't be negative"}), 400
+    admin_data.save_cpq_door_code(old_code, new_code, family_name, description, pieces["stile_pieces"], pieces["rail_pieces"])
+    audit.log(_actor(), "door_code.save", "door_code", new_code, {"old_code": old_code, "family_name": family_name, "description": description, **pieces})
     return jsonify({"ok": True})
 
 

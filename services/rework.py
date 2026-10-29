@@ -15,7 +15,7 @@ import logging
 
 import db
 from services import erp_lookup, erp_reconciliation, reference_data, test_data
-from services.costing import compute_costs
+from services.costing import COMPONENTS, compute_costs
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,9 @@ def _validate(payload: dict) -> dict:
     except (TypeError, ValueError):
         errors["quantity"] = "Must be a number."
 
+    if payload.get("component") not in (None, "", *COMPONENTS):
+        errors["component"] = f"Must be one of {', '.join(COMPONENTS)}."
+
     if payload.get("reason") and not reference_data.get_reason(payload["reason"]):
         errors["reason"] = "Not a recognised reason."
 
@@ -75,7 +78,46 @@ def _full_door_material_cost(payload: dict) -> float | None:
     return order["full_door_material_cost"] if order else None
 
 
-def create_event(payload: dict, user_id: int | None) -> dict:
+def resolve_piece_basis(payload: dict) -> dict:
+    """What Qty to Remove needs beyond the item itself, re-derived server-side
+    (never trusted from the client): the job's own material qty for this part
+    and how many of the chosen component (Stile/Rail) one door of this order's
+    CPQ code has. Only applies to Replace Part with a component picked; any
+    other case returns Nones and costing falls back to the per-item rule.
+    `error` is set when the choice can't be right (door has none of that
+    component, or more pieces scrapped than the door has)."""
+    out = {"component": None, "job_material_qty": None, "pieces_per_door": None, "error": None}
+    component = payload.get("component")
+    if payload.get("type") != "Replace Part" or component not in COMPONENTS or not payload.get("so_number"):
+        return out
+    out["component"] = component
+    try:
+        order = erp_lookup.lookup_order(payload["so_number"])
+    except Exception:
+        logger.exception("Order lookup failed for %s", payload.get("so_number"))
+        return out
+    if not order:
+        return out
+    code = str(payload.get("product_code") or "").strip().upper()
+    match = next((m for m in order["materials"] if m["part_number"].upper() == code and m["qty"] is not None), None)
+    pieces = (order.get("door_pieces") or {}).get(component)
+    if pieces is None or match is None:
+        return out  # not configured / not on this job -- costing falls back to the item rule
+    if pieces == 0:
+        out["error"] = f"This door has no {component.lower()}s."
+        return out
+    try:
+        if float(payload.get("quantity") or 0) > pieces:
+            out["error"] = f"This door only has {pieces} {component.lower()}{'s' if pieces != 1 else ''}."
+            return out
+    except (TypeError, ValueError):
+        pass
+    out["job_material_qty"] = float(match["qty"])
+    out["pieces_per_door"] = pieces
+    return out
+
+
+def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -> dict:
     _validate(payload)
 
     item = reference_data.get_item(payload["product_code"])
@@ -83,7 +125,13 @@ def create_event(payload: dict, user_id: int | None) -> dict:
     quantity = float(payload["quantity"])
     full_door_cost = _full_door_material_cost(payload)
 
-    costs = compute_costs(payload["type"], quantity, item, full_door_cost)
+    basis = resolve_piece_basis(payload)
+    if basis["error"]:
+        raise ValidationError({"quantity": basis["error"]})
+    costs = compute_costs(payload["type"], quantity, item, full_door_cost,
+                          basis["job_material_qty"], basis["pieces_per_door"])
+    if payload["type"] == "Rework / Recoat" and not charge_flat:
+        costs.material_cost = 0.0  # the flat recoat charge is per entry, not per material line
 
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -91,12 +139,12 @@ def create_event(payload: dict, user_id: int | None) -> dict:
             INSERT INTO rework_events (
                 rework_date, due_date, type, so_number, product_code, quantity,
                 height_mm, width_mm, cut_length_mm,
-                qty_to_remove, material_cost,
+                qty_to_remove, material_cost, component,
                 reason, source, colour, door_type, work_centre, notes, entered_by_user_id
             ) VALUES (
                 %(rework_date)s, %(due_date)s, %(type)s, %(so_number)s, %(product_code)s, %(quantity)s,
                 %(height_mm)s, %(width_mm)s, %(cut_length_mm)s,
-                %(qty_to_remove)s, %(material_cost)s,
+                %(qty_to_remove)s, %(material_cost)s, %(component)s,
                 %(reason)s, %(source)s, %(colour)s, %(door_type)s, %(work_centre)s, %(notes)s, %(entered_by_user_id)s
             ) RETURNING *
             """,
@@ -112,6 +160,7 @@ def create_event(payload: dict, user_id: int | None) -> dict:
                 "cut_length_mm": _optional_float(payload, "cut_length_mm"),
                 "qty_to_remove": costs.qty_to_remove,
                 "material_cost": costs.material_cost,
+                "component": basis["component"],
                 "reason": payload["reason"],
                 "source": reason["source"] if reason else None,
                 "colour": payload["colour"],
@@ -122,6 +171,38 @@ def create_event(payload: dict, user_id: int | None) -> dict:
             },
         )
         return cur.fetchone()
+
+
+LINE_FIELDS = ("product_code", "quantity", "component")
+
+
+def create_events(payload: dict, user_id: int | None) -> list[dict]:
+    """One entry can rework several materials (1, 2, 3 or more). The form
+    sends the shared fields once plus `materials: [{product_code, quantity,
+    component}, ...]`; each material becomes its own rework_events row (so the
+    log, write-off tab and dashboard keep working per part). Every line is
+    validated before any is written. A payload with no `materials` key is a
+    single line taken from the top-level fields, as before."""
+    base = {k: v for k, v in payload.items() if k != "materials"}
+    lines = payload.get("materials") or [{k: payload.get(k) for k in LINE_FIELDS}]
+    merged = [{**base, **{k: line.get(k) for k in LINE_FIELDS}} for line in lines]
+
+    errors: dict[str, str] = {}
+    if len(merged) > 1 and base.get("type") == "Scrap Entire Door":
+        errors["materials"] = "Scrap Entire Door is a single line (the whole door)."
+    for i, line in enumerate(merged):
+        prefix = f"line{i + 1}." if len(merged) > 1 else ""
+        try:
+            _validate(line)
+            basis = resolve_piece_basis(line)
+            if basis["error"]:
+                errors[prefix + "quantity"] = basis["error"]
+        except ValidationError as exc:
+            errors.update({prefix + k: v for k, v in exc.errors.items()})
+    if errors:
+        raise ValidationError(errors)
+
+    return [create_event(line, user_id, charge_flat=(i == 0)) for i, line in enumerate(merged)]
 
 
 def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) -> list[dict]:

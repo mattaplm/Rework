@@ -259,7 +259,7 @@
   <div class="card">
     <h2>Door Codes <span class="optional">code comes from SyteLine; Family Name is this app's Door Type list; Description is extra detail, both typed in by hand</span></h2>
     <table class="admin-table" id="doorCodeTable">
-      <thead><tr><th style="width:110px;">CPQ code</th><th>Family name</th><th>Description <span class="optional">optional</span></th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th style="width:110px;">CPQ code</th><th>Family name</th><th>Description <span class="optional">optional</span></th><th title="How many stile pieces one door has (blank = not set, 0 = none)">Stiles / door</th><th title="How many rail pieces one door has (blank = not set, 0 = none)">Rails / door</th><th>Status</th><th></th></tr></thead>
       <tbody id="doorCodeRows">
         {% for c in cpq_door_codes %}
         <tr class="{% if not c.active %}inactive-row{% endif %}" data-code="{{ c.cpq_code }}" data-name="{{ c.cpq_code }}">
@@ -274,6 +274,14 @@
           <td>
             <span class="view-val">{{ c.description or "" }}</span>
             <input type="text" class="edit-val rate-input" data-field="description" value="{{ c.description or '' }}" style="width:100%; max-width:280px;">
+          </td>
+          <td>
+            <span class="view-val">{{ c.stile_pieces if c.stile_pieces is not none else "" }}</span>
+            <input type="number" min="0" class="edit-val rate-input" data-field="stile_pieces" value="{{ c.stile_pieces if c.stile_pieces is not none else '' }}" style="width:70px;">
+          </td>
+          <td>
+            <span class="view-val">{{ c.rail_pieces if c.rail_pieces is not none else "" }}</span>
+            <input type="number" min="0" class="edit-val rate-input" data-field="rail_pieces" value="{{ c.rail_pieces if c.rail_pieces is not none else '' }}" style="width:70px;">
           </td>
           <td>{% if c.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
           <td>
@@ -295,6 +303,7 @@
       <button class="btn-sm" id="btnCheckUnmapped">Check SyteLine for new codes (~15-20s)</button>
     </div>
     <p class="hint" id="unmappedCodesResult" style="margin-top:10px;"></p>
+    <p class="hint">Stiles / Rails per door drive Qty to Remove for Replace Part entries: the job's own material qty × pieces scrapped ÷ pieces per door (e.g. 1 length, 2 stiles, scrap 1 → 0.5). Leave blank if not set yet; 0 means the door has none. Without a value, Qty to Remove falls back to the item's old rule.</p>
   </div>
 </div>
 
@@ -675,7 +684,9 @@
       var familyName = tr.querySelector('[data-field="family_name"]').value.trim();
       var description = tr.querySelector('[data-field="description"]').value.trim();
       if (!newCode || !familyName) { showToast("Code and family name are both required", true); return; }
-      post("/api/admin/door-codes", { old_code: oldCode, cpq_code: newCode, family_name: familyName, description: description }).then(function (res) {
+      var stilePieces = tr.querySelector('[data-field="stile_pieces"]').value.trim();
+      var railPieces = tr.querySelector('[data-field="rail_pieces"]').value.trim();
+      post("/api/admin/door-codes", { old_code: oldCode, cpq_code: newCode, family_name: familyName, description: description, stile_pieces: stilePieces, rail_pieces: railPieces }).then(function (res) {
         if (res.ok) { showToast("Saved " + newCode + "."); location.reload(); }
         else showToast(res.data.error || "Failed", true);
       });
@@ -690,6 +701,8 @@
       '<td><span class="view-val"></span><input type="text" class="edit-val rate-input" data-field="code" value="" style="width:90px;"></td>' +
       '<td><span class="view-val"></span><input type="text" class="edit-val rate-input" data-field="family_name" value="" style="width:100%; max-width:200px;"></td>' +
       '<td><span class="view-val"></span><input type="text" class="edit-val rate-input" data-field="description" value="" style="width:100%; max-width:280px;"></td>' +
+      '<td><span class="view-val"></span><input type="number" min="0" class="edit-val rate-input" data-field="stile_pieces" value="" style="width:70px;"></td>' +
+      '<td><span class="view-val"></span><input type="number" min="0" class="edit-val rate-input" data-field="rail_pieces" value="" style="width:70px;"></td>' +
       '<td><span class="view-val"></span></td>' +
       '<td>' +
       '<span class="view-val actions-row"><button class="btn-sm edit-door-code" type="button">Edit</button></span>' +

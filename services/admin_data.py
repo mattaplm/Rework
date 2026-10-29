@@ -177,7 +177,8 @@ def list_cpq_door_codes() -> list[dict]:
         return cur.fetchall()
 
 
-def save_cpq_door_code(old_code: str | None, new_code: str, family_name: str, description: str) -> None:
+def save_cpq_door_code(old_code: str | None, new_code: str, family_name: str, description: str,
+                       stile_pieces: int | None = None, rail_pieces: int | None = None) -> None:
     """Upserts (new_code, family_name, description). If `old_code` is given
     and differs from `new_code`, the old row is deleted first -- editing a
     row's code acts like renaming it, rather than leaving both the old and
@@ -199,9 +200,12 @@ def save_cpq_door_code(old_code: str | None, new_code: str, family_name: str, de
                 active = existing["active"]
             cur.execute("DELETE FROM cpq_door_codes WHERE cpq_code = %s", (old_code,))
         cur.execute(
-            "INSERT INTO cpq_door_codes (cpq_code, family_name, description, active) VALUES (%s, %s, %s, %s) "
-            "ON CONFLICT (cpq_code) DO UPDATE SET family_name = EXCLUDED.family_name, description = EXCLUDED.description",
-            (new_code, family_name, description, active),
+            "INSERT INTO cpq_door_codes (cpq_code, family_name, description, active, stile_pieces, rail_pieces) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (cpq_code) DO UPDATE SET family_name = EXCLUDED.family_name, "
+            "description = EXCLUDED.description, stile_pieces = EXCLUDED.stile_pieces, "
+            "rail_pieces = EXCLUDED.rail_pieces",
+            (new_code, family_name, description, active, stile_pieces, rail_pieces),
         )
 
 

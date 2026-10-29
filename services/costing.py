@@ -30,6 +30,9 @@ from dataclasses import dataclass
 REWORK_RECOAT_FLAT_COST = 132.0
 
 
+COMPONENTS = ("Stile", "Rail")
+
+
 @dataclass
 class CostResult:
     qty_to_remove: float | None
@@ -45,10 +48,24 @@ def compute_costs(
     quantity: float,
     item: dict | None,
     full_door_material_cost: float | None = None,
+    job_material_qty: float | None = None,
+    pieces_per_door: int | None = None,
 ) -> CostResult:
     """`item` is a row from services.reference_data.get_item (or None if the
-    product code isn't recognised) -- carries rule/std_cost."""
-    qty_to_remove = float(item["rule"]) * quantity if item and item.get("rule") is not None else None
+    product code isn't recognised) -- carries rule/std_cost.
+
+    Qty to remove (2026-10-30): when the operator says what the part is
+    (a stile or a rail) and we know both the job's own material qty for it
+    (`job_material_qty`, from jobmatl_mst -- e.g. 1 length) and how many of
+    that component one door has (`pieces_per_door`, set per CPQ code in
+    Admin -> Door Codes -- e.g. 2 stiles), scrapping `quantity` pieces writes
+    off that share of the material: job_material_qty x quantity / pieces.
+    Anything else (no component, no job, pieces not set yet) falls back to
+    the old per-item `rule` x quantity."""
+    if pieces_per_door and job_material_qty is not None:
+        qty_to_remove = round(float(job_material_qty) * quantity / pieces_per_door, 4)
+    else:
+        qty_to_remove = float(item["rule"]) * quantity if item and item.get("rule") is not None else None
 
     material_cost = None
     if rework_type == "Scrap Entire Door" and full_door_material_cost is not None:

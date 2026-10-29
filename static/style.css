@@ -396,3 +396,7 @@ table.admin-table td.colour-swatch-cell{width:20px;}
   position:fixed; z-index:200; background:var(--text); color:var(--bg); padding:6px 10px; border-radius:6px;
   font-size:.78rem; pointer-events:none; box-shadow:0 6px 16px rgba(0,0,0,.2); line-height:1.4;
 }
+
+/* Entry form: one block per material being reworked */
+.material-line{padding:0 0 14px; margin-bottom:14px; border-bottom:1px dashed var(--border, #e2e8f0);}
+.material-line:last-of-type{border-bottom:0; margin-bottom:8px;}

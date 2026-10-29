@@ -91,14 +91,16 @@ def api_create():
     payload = request.get_json(force=True, silent=True) or {}
     user = current_user()
     try:
-        event = rework_service.create_event(payload, user_id=user["id"] if user else None)
+        events = rework_service.create_events(payload, user_id=user["id"] if user else None)
     except rework_service.ValidationError as exc:
         return jsonify({"ok": False, "errors": exc.errors}), 400
-    audit.log(
-        user["username"] if user else "unknown", "rework_event.create", "rework_event", event["id"],
-        {"type": event["type"], "so_number": event["so_number"], "product_code": event["product_code"], "quantity": str(event["quantity"])},
-    )
-    return jsonify({"ok": True, "event": event})
+    for event in events:
+        audit.log(
+            user["username"] if user else "unknown", "rework_event.create", "rework_event", event["id"],
+            {"type": event["type"], "so_number": event["so_number"], "product_code": event["product_code"],
+             "quantity": str(event["quantity"]), "component": event.get("component")},
+        )
+    return jsonify({"ok": True, "event": events[0], "events": events})
 
 
 @bp.route("/api/items/search")
@@ -139,8 +141,11 @@ def api_cost_preview():
     full_door_cost = payload.get("full_door_material_cost")
     full_door_cost = float(full_door_cost) if full_door_cost is not None else None
 
-    costs = compute_costs(payload.get("type", ""), quantity, item, full_door_cost)
+    basis = rework_service.resolve_piece_basis(payload)
+    costs = compute_costs(payload.get("type", ""), quantity, item, full_door_cost,
+                          basis["job_material_qty"], basis["pieces_per_door"])
     return jsonify({
+        "piece_basis": basis,
         "matched": item is not None,
         "description": item["description"] if item else None,
         "qty_to_remove": costs.qty_to_remove,
