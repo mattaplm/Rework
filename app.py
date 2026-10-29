@@ -37,6 +37,13 @@ def create_app() -> Flask:
     app.register_blueprint(import_excel.bp)
     app.register_blueprint(dashboard.bp)
 
+    @app.get("/health")
+    def health():
+        with db.get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return {"status": "ok", "revision": os.getenv("REWORK_REVISION", "development")}
+
     @app.context_processor
     def inject_user():
         return {"current_user": current_user()}

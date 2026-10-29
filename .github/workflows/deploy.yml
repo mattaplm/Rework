@@ -1,0 +1,75 @@
+name: Test and verify deployment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rework-production
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test application
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install ODBC runtime
+        run: sudo apt-get update -qq && sudo apt-get install -y unixodbc
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q
+
+  deployment:
+    name: Verify deployment on APLMAPPS01
+    needs: test
+    runs-on: [self-hosted, Linux, X64, aplmapps01, rework]
+    timeout-minutes: 25
+    steps:
+      # The app owner's agent builds, tests, backs up and deploys main. This
+      # restricted runner verifies the exact live revision without Docker access.
+      - name: Wait for this commit to become healthy
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: |
+          python3 -u - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          expected = os.environ['EXPECTED_REVISION']
+          url = 'http://10.160.21.109:5071/health'
+          deadline = time.monotonic() + 1200
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=10) as response:
+                      health = json.load(response)
+                  if health.get('status') == 'ok' and health.get('revision') == expected:
+                      print(f'Healthy deployment confirmed: {expected}')
+                      with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                          summary.write(f'Deployed `{expected}` to [Rework](http://aplmapps01:5071). '
+                                        'Application and database health checks passed.\n')
+                      break
+                  print(f'Waiting for {expected}; live revision: {health.get("revision", "unknown")}')
+              except (urllib.error.URLError, TimeoutError, ValueError) as error:
+                  print(f'Waiting for deployment health: {error}')
+              time.sleep(10)
+          else:
+              raise SystemExit('Deployment did not become healthy within 20 minutes. '
+                               'Inspect /home/aplmadmin/rework/.autodeploy/deploy.log on APLMAPPS01.')
+          PY

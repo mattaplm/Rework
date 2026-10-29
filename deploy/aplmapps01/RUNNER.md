@@ -21,7 +21,9 @@ test commit, and compiled all 35 tracked Python files successfully. This checked
 runner execution and Python syntax, not application tests or a Docker build.
 The temporary test branch was removed afterward. No build or deployment
 workflow was added to `main` by that runner setup. Application pushes are now
-handled by the app owner's polling deployment agent; see
+handled by the app owner's polling deployment agent. The permanent
+`Test and verify deployment` workflow now uses this runner to verify the exact
+healthy revision over HTTP after its GitHub-hosted test job passes; see
 [automatic deployment](README.md#automatic-deployment).
 
 The runner is installed at `/opt/actions-runner-rework`, owned by the dedicated
@@ -52,7 +54,8 @@ This is a public repository and the server has internal network access.
 Run only trusted code on this runner. Use GitHub-hosted runners for pull request
 checks, especially fork contributions; account and filesystem isolation do not
 isolate access to the internal network. No permanent workflow triggers are added
-by this setup. See GitHub's [self-hosted runner security guidance](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners).
+by the original runner setup. The deployment verification workflow runs only
+for `main`, with no pull request trigger. See GitHub's [self-hosted runner security guidance](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners).
 
 ## Verification and maintenance
 

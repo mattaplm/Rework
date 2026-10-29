@@ -82,6 +82,7 @@ def deploy(root, state):
                     raise RuntimeError(f"Release is missing required SQLite hosting file: {required}")
             image = f"rework:git-{revision}"
             run("docker", "build", "--label", f"org.opencontainers.image.revision={revision}",
+                "--build-arg", f"REWORK_REVISION={revision}",
                 "--tag", image, str(source), timeout=1200)
             run("docker", "run", "--rm", "--user", "0:0",
                 "--mount", f"type=bind,src={source / 'tests'},dst=/tests,readonly",
@@ -110,7 +111,10 @@ def deploy(root, state):
                 "from services import scheduled_sync; "
                 "scheduled_sync.start_background_thread = lambda: None; "
                 "from app import app; "
-                "assert app.test_client().get('/login').status_code == 200",
+                "assert app.test_client().get('/login').status_code == 200; "
+                "import os; "
+                "assert app.test_client().get('/health').json == "
+                "{'status': 'ok', 'revision': os.environ['REWORK_REVISION']}",
                 timeout=180)
 
             # Refuse stale deployments if another push arrived during the build.

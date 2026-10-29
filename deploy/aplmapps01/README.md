@@ -91,7 +91,16 @@ Local commits and pushes to feature branches do not deploy. A push to `main`
 is normally picked up within one minute, followed by build/test/startup time.
 The repository is public, so fetching it needs no GitHub credential.
 
-The existing GitHub runner remains restricted and is not used for deployments.
+GitHub Actions runs **Test and verify deployment** on every push to `main` and
+can also be started with **Run workflow**. Its first job runs tests on a GitHub
+hosted runner. Its second job uses `aplmapps01-rework` to wait until `/health`
+reports a working database and the exact pushed commit. A green deployment job
+therefore confirms the new version is serving, not merely that tests passed.
+The server agent performs the build and deployment independently, with its own
+tests; the Actions verification job reports the result. Cancelling an Actions
+run does not cancel a server deployment that is already in progress.
+
+The existing GitHub runner remains restricted and has no Docker access.
 The deployment job runs as `aplmadmin`, which already owns this application and
 has Docker access. No sudo, new SSH key, or runner permission change is needed.
 
