@@ -10,7 +10,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 import db
 import erp
-from services import admin_data, audit, erp_lookup, erp_sync, scheduled_sync, test_data
+from services import admin_data, audit, erp_lookup, erp_sync, scheduled_sync, test_data, version
 from services.auth import current_user, role_required
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ def admin_page():
         test_job_number=test_data.JOB_NUMBER,
         test_colour_name=test_data.COLOUR_NAME,
         audit_log=audit.list_recent(),
+        app_version=version.get_version(),
     )
 
 
