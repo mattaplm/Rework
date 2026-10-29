@@ -77,9 +77,9 @@ placeholders). `devdb/data/` (the actual database files) and
 `npm install` reproduces the same two packages for anyone else without
 Docker/admin rights.
 
-This is a **local dev convenience only** -- the real deployment target is
-still a proper Postgres server (Docker Compose locally where Docker works,
-the department's own Postgres server later, per `docker-compose.yml`).
+This remains a **local dev convenience only**. The hosted deployment now uses
+SQLite (2026-10-28); PostgreSQL remains an optional backend for development
+or a later migration. See the SQLite hosting section below.
 
 **If `npm install` fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`**: the
 corporate network TLS-intercepts outbound HTTPS, and Node (unlike curl/git,
@@ -104,6 +104,22 @@ Reading the certificate store doesn't need admin rights -- only installing
 into it does.
 
 ## Configuration
+
+### SQLite hosting on APLMAPPS01 (2026-10-28)
+
+The hosted deployment currently uses `DATABASE_BACKEND=sqlite` and
+`SQLITE_PATH=/data/rework.sqlite3`, with the host's private `data/` directory
+mounted persistently. It runs only the app container. PostgreSQL remains an
+explicit alternative (`DATABASE_BACKEND=postgres`, the default for existing
+development setups); neither database is automatically migrated into the other.
+See `deploy/aplmapps01/README.md` for the live deployment and backup commands.
+
+`sqlite_db.py` supplies dict rows, parameter binding, ISO date helpers, foreign
+keys and transaction handling. SQL dialect expressions live in `db.py`;
+SQLite has its own migration history under `migrations/sqlite/`. Its first
+migration matches the final PostgreSQL schema through migration 0014.
+`python backup_sqlite.py` uses SQLite's online backup API and verifies the result.
+Do not copy a live WAL database file alone as a backup.
 
 Copy `.env.example` to `.env`. Key variables:
 - `POSTGRES_*` -- local Postgres connection. Runs in its own container via

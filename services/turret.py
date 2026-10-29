@@ -46,16 +46,16 @@ def list_events(limit: int = 200, offset: int = 0, filters: dict | None = None) 
     clauses, params = [], {}
 
     if filters.get("year"):
-        clauses.append("EXTRACT(YEAR FROM event_date) = %(year)s")
+        clauses.append(f"{db.date_part('year', 'event_date')} = %(year)s")
         params["year"] = int(filters["year"])
     if filters.get("month"):
-        clauses.append("EXTRACT(MONTH FROM event_date) = %(month)s")
+        clauses.append(f"{db.date_part('month', 'event_date')} = %(month)s")
         params["month"] = int(filters["month"])
     if filters.get("door_type"):
         clauses.append("door_type = %(door_type)s")
         params["door_type"] = filters["door_type"]
     if filters.get("job_number"):
-        clauses.append("job_number ILIKE %(job_number)s")
+        clauses.append("LOWER(job_number) LIKE LOWER(%(job_number)s)")
         params["job_number"] = f"%{filters['job_number']}%"
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -73,7 +73,7 @@ def list_events(limit: int = 200, offset: int = 0, filters: dict | None = None) 
 
 def list_available_years() -> list[int]:
     with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT EXTRACT(YEAR FROM event_date)::int AS y FROM turret_events ORDER BY y DESC")
+        cur.execute(f"SELECT DISTINCT {db.date_part('year', 'event_date')} AS y FROM turret_events ORDER BY y DESC")
         return [r["y"] for r in cur.fetchall()]
 
 
@@ -91,7 +91,8 @@ _UNPIVOT_SCRAP = """
     SELECT week_num, scrap_sheet_c AS item, scrap_qty_c AS qty, scrap_date_c AS scrap_date, sales_number FROM turret_events WHERE scrap_qty_c IS NOT NULL AND scrap_date_c IS NOT NULL
 """
 
-_WRITEOFF_DATE_EXPR = "(date_trunc('week', scrap_date) + interval '7 days')::date"
+def _writeoff_date_expr() -> str:
+    return db.date_shift(db.week_start("scrap_date"), 7)
 
 
 def scrap_summary_by_week(write_off_week: int | None = None, write_off_year: int | None = None) -> list[dict]:
@@ -119,10 +120,10 @@ def scrap_summary_by_week(write_off_week: int | None = None, write_off_year: int
     """
     clauses, params = [], {"test_so": test_data.SO_NUMBER}
     if write_off_week is not None:
-        clauses.append("EXTRACT(WEEK FROM u.write_off_date)::int = %(week)s")
+        clauses.append(f"{db.date_part('week', 'u.write_off_date')} = %(week)s")
         params["week"] = write_off_week
     if write_off_year is not None:
-        clauses.append("EXTRACT(ISOYEAR FROM u.write_off_date)::int = %(year)s")
+        clauses.append(f"{db.date_part('isoyear', 'u.write_off_date')} = %(year)s")
         params["year"] = write_off_year
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -130,17 +131,17 @@ def scrap_summary_by_week(write_off_week: int | None = None, write_off_year: int
         cur.execute(
             f"""
             WITH unpivoted AS (
-                SELECT week_num, item, qty, sales_number, {_WRITEOFF_DATE_EXPR} AS write_off_date
+                SELECT week_num, item, qty, sales_number, {_writeoff_date_expr()} AS write_off_date
                 FROM ({_UNPIVOT_SCRAP}) base
             )
             SELECT
-                EXTRACT(ISOYEAR FROM u.write_off_date)::int AS write_off_year,
-                EXTRACT(WEEK FROM u.write_off_date)::int AS write_off_week,
+                {db.date_part('isoyear', 'u.write_off_date')} AS write_off_year,
+                {db.date_part('week', 'u.write_off_date')} AS write_off_week,
                 u.item, i.description,
                 SUM(u.qty) AS total_qty,
-                array_agg(DISTINCT u.week_num ORDER BY u.week_num) FILTER (WHERE u.week_num IS NOT NULL) AS from_weeks,
+                {db.sorted_array('u.week_num')} AS from_weeks,
                 COUNT(*) AS line_count,
-                BOOL_OR(LOWER(u.sales_number) = LOWER(%(test_so)s)) AS includes_test_data
+                MAX(CASE WHEN LOWER(u.sales_number) = LOWER(%(test_so)s) THEN 1 ELSE 0 END) AS includes_test_data
             FROM unpivoted u
             LEFT JOIN items i ON i.part_number = u.item
             {where}
@@ -166,10 +167,10 @@ def list_available_scrap_weeks() -> list[dict]:
         cur.execute(
             f"""
             SELECT DISTINCT
-                EXTRACT(ISOYEAR FROM write_off_date)::int AS write_off_year,
-                EXTRACT(WEEK FROM write_off_date)::int AS write_off_week
+                {db.date_part('isoyear', 'write_off_date')} AS write_off_year,
+                {db.date_part('week', 'write_off_date')} AS write_off_week
             FROM (
-                SELECT {_WRITEOFF_DATE_EXPR} AS write_off_date
+                SELECT {_writeoff_date_expr()} AS write_off_date
                 FROM ({_UNPIVOT_SCRAP}) base
             ) w
             ORDER BY write_off_year DESC, write_off_week DESC
@@ -193,7 +194,7 @@ def create_event(payload: dict, user_id: int | None) -> int:
 
     `week_num` -- the job's own production week, shown as "Production week(s)" on
     the Scrap write-off tab -- is stamped here from `event_date`'s own ISO
-    week (same `EXTRACT(WEEK FROM ...)` definition used everywhere else in
+    week (same ISO week definition used everywhere else in
     this app). Historical imported rows carry the old spreadsheet's own
     hand-typed week column instead; this is the web-form equivalent, set
     once at creation and never touched again by update_event, same "stamped

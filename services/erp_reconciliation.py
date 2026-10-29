@@ -45,11 +45,11 @@ def erp_actuals_by_item_week() -> dict[tuple[str, int, int], dict]:
     """
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT
                 item,
-                EXTRACT(ISOYEAR FROM txn_date)::int AS isoyear,
-                EXTRACT(WEEK FROM txn_date)::int AS isoweek,
+                {db.date_part('isoyear', 'txn_date')} AS isoyear,
+                {db.date_part('week', 'txn_date')} AS isoweek,
                 SUM(qty) AS qty,
                 SUM(scrap_cost) AS cost
             FROM erp_scrap_transactions

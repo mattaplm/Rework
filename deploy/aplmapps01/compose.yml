@@ -1,0 +1,33 @@
+name: rework
+
+services:
+  app:
+    image: ${REWORK_IMAGE:?Set REWORK_IMAGE to the release image}
+    restart: unless-stopped
+    user: "${REWORK_UID:-1001}:${REWORK_GID:-1001}"
+    env_file: .env
+    environment:
+      DATABASE_BACKEND: sqlite
+      SQLITE_PATH: /data/rework.sqlite3
+      TZ: Pacific/Auckland
+    volumes:
+      - ./data:/data
+    ports:
+      - "${REWORK_BIND:?Set REWORK_BIND to the internal server IP}:${REWORK_PORT:-5071}:5050"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/login', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

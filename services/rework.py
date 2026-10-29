@@ -129,10 +129,10 @@ def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) 
     clauses, params = [], {}
 
     if filters.get("year"):
-        clauses.append("EXTRACT(YEAR FROM rework_date) = %(year)s")
+        clauses.append(f"{db.date_part('year', 'rework_date')} = %(year)s")
         params["year"] = int(filters["year"])
     if filters.get("month"):
-        clauses.append("EXTRACT(MONTH FROM rework_date) = %(month)s")
+        clauses.append(f"{db.date_part('month', 'rework_date')} = %(month)s")
         params["month"] = int(filters["month"])
     if filters.get("door_type"):
         clauses.append("door_type = %(door_type)s")
@@ -144,7 +144,7 @@ def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) 
         clauses.append("work_centre = %(work_centre)s")
         params["work_centre"] = filters["work_centre"]
     if filters.get("so_number"):
-        clauses.append("so_number ILIKE %(so_number)s")
+        clauses.append("LOWER(so_number) LIKE LOWER(%(so_number)s)")
         params["so_number"] = f"%{filters['so_number']}%"
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -164,7 +164,7 @@ def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) 
 def list_available_years() -> list[int]:
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT DISTINCT EXTRACT(YEAR FROM rework_date)::int AS y FROM rework_events ORDER BY y DESC"
+            f"SELECT DISTINCT {db.date_part('year', 'rework_date')} AS y FROM rework_events ORDER BY y DESC"
         )
         return [r["y"] for r in cur.fetchall()]
 
@@ -222,7 +222,8 @@ def get_event(event_id: int) -> dict | None:
 # at year boundaries) to avoid merging e.g. week 1 of 2025 with week 1 of
 # 2026.
 
-_WRITEOFF_DATE_EXPR = "(date_trunc('week', entered_date) + interval '7 days')::date"
+def _writeoff_date_expr() -> str:
+    return db.date_shift(db.week_start("entered_date"), 7)
 
 
 def scrap_writeoff_summary(write_off_week: int | None = None, write_off_year: int | None = None) -> list[dict]:
@@ -231,10 +232,10 @@ def scrap_writeoff_summary(write_off_week: int | None = None, write_off_year: in
         "test_so": test_data.SO_NUMBER,
     }
     if write_off_week is not None:
-        clauses.append("EXTRACT(WEEK FROM write_off_date)::int = %(week)s")
+        clauses.append(f"{db.date_part('week', 'write_off_date')} = %(week)s")
         params["week"] = write_off_week
     if write_off_year is not None:
-        clauses.append("EXTRACT(ISOYEAR FROM write_off_date)::int = %(year)s")
+        clauses.append(f"{db.date_part('isoyear', 'write_off_date')} = %(year)s")
         params["year"] = write_off_year
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -242,20 +243,20 @@ def scrap_writeoff_summary(write_off_week: int | None = None, write_off_year: in
         cur.execute(
             f"""
             WITH scoped AS (
-                SELECT product_code, qty_to_remove, so_number, {_WRITEOFF_DATE_EXPR} AS write_off_date
+                SELECT product_code, qty_to_remove, so_number, {_writeoff_date_expr()} AS write_off_date
                 FROM rework_events
                 WHERE qty_to_remove IS NOT NULL AND type = 'Replace Part'
-                  AND NOT (product_code = ANY(%(sheet_items)s))
+                  AND NOT ({db.in_values('product_code', '%(sheet_items)s')})
             )
             SELECT
                 s.write_off_date,
-                EXTRACT(ISOYEAR FROM s.write_off_date)::int AS write_off_year,
-                EXTRACT(WEEK FROM s.write_off_date)::int AS write_off_week,
-                EXTRACT(WEEK FROM s.write_off_date - interval '7 days')::int AS from_week,
+                {db.date_part('isoyear', 's.write_off_date')} AS write_off_year,
+                {db.date_part('week', 's.write_off_date')} AS write_off_week,
+                {db.date_part('week', db.date_shift('s.write_off_date', -7))} AS from_week,
                 s.product_code, i.description,
                 SUM(s.qty_to_remove) AS total_qty,
                 COUNT(*) AS line_count,
-                BOOL_OR(LOWER(s.so_number) = LOWER(%(test_so)s)) AS includes_test_data
+                MAX(CASE WHEN LOWER(s.so_number) = LOWER(%(test_so)s) THEN 1 ELSE 0 END) AS includes_test_data
             FROM scoped s
             LEFT JOIN items i ON i.part_number = s.product_code
             {where}
@@ -281,10 +282,10 @@ def list_available_writeoff_weeks() -> list[dict]:
         cur.execute(
             f"""
             SELECT DISTINCT
-                EXTRACT(ISOYEAR FROM write_off_date)::int AS write_off_year,
-                EXTRACT(WEEK FROM write_off_date)::int AS write_off_week
+                {db.date_part('isoyear', 'write_off_date')} AS write_off_year,
+                {db.date_part('week', 'write_off_date')} AS write_off_week
             FROM (
-                SELECT {_WRITEOFF_DATE_EXPR} AS write_off_date
+                SELECT {_writeoff_date_expr()} AS write_off_date
                 FROM rework_events WHERE qty_to_remove IS NOT NULL
             ) s
             ORDER BY write_off_year DESC, write_off_week DESC

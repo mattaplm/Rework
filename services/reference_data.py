@@ -95,7 +95,7 @@ def search_items(query: str, limit: int = 15) -> list[dict]:
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT part_number, description, std_cost FROM items "
-            "WHERE part_number ILIKE %s OR description ILIKE %s "
+            "WHERE LOWER(part_number) LIKE LOWER(%s) OR LOWER(description) LIKE LOWER(%s) "
             "ORDER BY part_number LIMIT %s",
             (f"%{query}%", f"%{query}%", limit),
         )

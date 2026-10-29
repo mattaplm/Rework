@@ -11,63 +11,65 @@ dashboard.py can pass one parsed value through to all of them."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import db
 
 
 def summary(days: int | None = 90) -> dict:
-    where = "WHERE rework_date >= CURRENT_DATE - make_interval(days => %(days)s)" if days is not None else ""
+    where = "WHERE rework_date >= %(since)s" if days is not None else ""
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             f"""
             SELECT
                 COUNT(*) AS total_entries,
-                (COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0))::float8 AS total_cost,
+                CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost,
                 COUNT(*) FILTER (WHERE type = 'Rework / Recoat') AS rework_count,
                 COUNT(*) FILTER (WHERE type = 'Replace Part') AS replace_count,
                 COUNT(*) FILTER (WHERE type = 'Scrap Entire Door') AS scrap_count
             FROM rework_events
             {where}
             """,
-            {"days": days},
+            {"since": db.nz_now().date() - timedelta(days=days or 0)},
         )
         return cur.fetchone()
 
 
 def weekly_trend(weeks: int | None = 12) -> list[dict]:
-    where = "WHERE rework_date >= CURRENT_DATE - make_interval(weeks => %(weeks)s)" if weeks is not None else ""
+    where = "WHERE rework_date >= %(since)s" if weeks is not None else ""
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT date_trunc('week', rework_date)::date::text AS week_start,
+            SELECT {db.week_start('rework_date')} AS week_start,
                    COUNT(*) AS entries,
-                   (COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0))::float8 AS total_cost
+                   CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost
             FROM rework_events
             {where}
             GROUP BY 1 ORDER BY 1
             """,
-            {"weeks": weeks},
+            {"since": db.nz_now().date() - timedelta(weeks=weeks or 0)},
         )
         return cur.fetchall()
 
 
 def top_reasons(limit: int = 8, days: int | None = 90) -> list[dict]:
-    where = "WHERE rework_date >= CURRENT_DATE - make_interval(days => %(days)s)" if days is not None else ""
+    where = "WHERE rework_date >= %(since)s" if days is not None else ""
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             f"""
             SELECT reason, COUNT(*) AS entries,
-                   (COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0))::float8 AS total_cost
+                   CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost
             FROM rework_events
             {where}
             GROUP BY reason ORDER BY entries DESC LIMIT %(limit)s
             """,
-            {"days": days, "limit": limit},
+            {"since": db.nz_now().date() - timedelta(days=days or 0), "limit": limit},
         )
         return cur.fetchall()
 
 
 def by_door_type(limit: int = 10, days: int | None = 90) -> list[dict]:
-    where = "WHERE rework_date >= CURRENT_DATE - make_interval(days => %(days)s)" if days is not None else ""
+    where = "WHERE rework_date >= %(since)s" if days is not None else ""
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             f"""
@@ -76,13 +78,13 @@ def by_door_type(limit: int = 10, days: int | None = 90) -> list[dict]:
             {where}
             GROUP BY door_type ORDER BY entries DESC LIMIT %(limit)s
             """,
-            {"days": days, "limit": limit},
+            {"since": db.nz_now().date() - timedelta(days=days or 0), "limit": limit},
         )
         return cur.fetchall()
 
 
 def by_colour(limit: int = 10, days: int | None = 90) -> list[dict]:
-    where = "WHERE rework_date >= CURRENT_DATE - make_interval(days => %(days)s)" if days is not None else ""
+    where = "WHERE rework_date >= %(since)s" if days is not None else ""
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             f"""
@@ -91,6 +93,6 @@ def by_colour(limit: int = 10, days: int | None = 90) -> list[dict]:
             {where}
             GROUP BY colour ORDER BY entries DESC LIMIT %(limit)s
             """,
-            {"days": days, "limit": limit},
+            {"since": db.nz_now().date() - timedelta(days=days or 0), "limit": limit},
         )
         return cur.fetchall()

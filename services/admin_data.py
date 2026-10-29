@@ -151,7 +151,7 @@ def set_colour_active(name: str, active: bool) -> None:
 def search_items_all(query: str, limit: int = 50) -> list[dict]:
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT * FROM items WHERE part_number ILIKE %s OR description ILIKE %s "
+            "SELECT * FROM items WHERE LOWER(part_number) LIKE LOWER(%s) OR LOWER(description) LIKE LOWER(%s) "
             "ORDER BY part_number LIMIT %s",
             (f"%{query}%", f"%{query}%", limit),
         )

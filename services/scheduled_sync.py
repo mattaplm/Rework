@@ -59,7 +59,7 @@ _SCRAP_DEFAULTS = {"frequency": "weekly", "time": "06:00", "day_of_week": 0}
 def _get_schedule(prefix: str, defaults: dict) -> dict:
     keys = [f"{prefix}_enabled", f"{prefix}_frequency", f"{prefix}_time", f"{prefix}_day"]
     with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT key, value FROM settings WHERE key = ANY(%s)", (keys,))
+        cur.execute(f"SELECT key, value FROM settings WHERE {db.in_values('key', '%s')}", (keys,))
         rows = {r["key"]: r["value"] for r in cur.fetchall()}
     return {
         "enabled": rows.get(f"{prefix}_enabled", "true") == "true",

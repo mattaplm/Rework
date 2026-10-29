@@ -1,7 +1,7 @@
 """
 Database layer for the Doors Rework tracker.
 
-Local storage:  PostgreSQL (source of truth for everything this app owns)
+Local storage:  PostgreSQL or SQLite (selected by DATABASE_BACKEND)
 Remote source:  SyteLine SQL Server (read-only ERP data via pyodbc) -- see erp.py
 
 Raw SQL throughout, no ORM -- same convention as Scheduler's db.py. Every
@@ -16,7 +16,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 import psycopg2.extras
@@ -30,6 +30,45 @@ logger = logging.getLogger(__name__)
 _NZ_TZ = ZoneInfo("Pacific/Auckland")
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+def backend() -> str:
+    value = os.getenv("DATABASE_BACKEND", "postgres").lower()
+    if value not in ("postgres", "sqlite"):
+        raise ValueError("DATABASE_BACKEND must be postgres or sqlite")
+    return value
+
+
+def date_part(part: str, expression: str) -> str:
+    if part.lower() not in ("year", "month", "week", "isoyear"):
+        raise ValueError("Unsupported date part")
+    if backend() == "sqlite":
+        return f"date_part('{part.lower()}', {expression})"
+    return f"CAST(EXTRACT({part} FROM {expression}) AS INTEGER)"
+
+
+def week_start(expression: str) -> str:
+    if backend() == "sqlite":
+        return f"week_start({expression})"
+    return f"date_trunc('week', {expression})::date::text"
+
+
+def date_shift(expression: str, days: int) -> str:
+    if backend() == "sqlite":
+        return f"date_shift({expression}, {int(days)})"
+    return f"(({expression})::date + {int(days)})"
+
+
+def in_values(expression: str, placeholder: str) -> str:
+    if backend() == "sqlite":
+        return f"{expression} IN (SELECT value FROM json_each({placeholder}))"
+    return f"{expression} = ANY({placeholder})"
+
+
+def sorted_array(expression: str) -> str:
+    if backend() == "sqlite":
+        return f"sorted_array({expression})"
+    return f"array_agg(DISTINCT {expression} ORDER BY {expression}) FILTER (WHERE {expression} IS NOT NULL)"
 
 
 def nz_now() -> datetime:
@@ -67,10 +106,15 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
 
 @contextmanager
 def get_conn():
-    """`with get_conn() as conn:` -- commits on a clean exit, rolls back on
-    exception, always returns the connection to the pool afterward."""
-    pool = _get_pool()
-    conn = pool.getconn()
+    """Commit on success and roll back on failure. Close SQLite connections;
+    return PostgreSQL connections to the pool."""
+    sqlite = backend() == "sqlite"
+    if sqlite:
+        from sqlite_db import Connection
+        conn = Connection(os.getenv("SQLITE_PATH", "data/rework.sqlite3"))
+    else:
+        pool = _get_pool()
+        conn = pool.getconn()
     try:
         yield conn
         conn.commit()
@@ -78,13 +122,20 @@ def get_conn():
         conn.rollback()
         raise
     finally:
-        pool.putconn(conn)
+        if sqlite:
+            conn.close()
+        else:
+            pool.putconn(conn)
 
 
 def init_db() -> None:
     """Runs every migrations/*.sql file in order, inside its own transaction,
     tracked in a schema_migrations table so each file only ever runs once.
     Safe to call on every startup."""
+    if backend() == "sqlite":
+        _init_sqlite()
+        _ensure_default_admin()
+        return
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -104,6 +155,34 @@ def init_db() -> None:
                 cur.execute("INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,))
 
     _ensure_default_admin()
+
+
+def _init_sqlite() -> None:
+    import sqlite3
+    with get_conn() as conn:
+        conn.raw.execute("PRAGMA journal_mode=WAL")
+        conn.raw.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations "
+            "(filename TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (now()))"
+        )
+        applied = {row["filename"] for row in conn.raw.execute("SELECT filename FROM schema_migrations")}
+        for path in sorted((_MIGRATIONS_DIR / "sqlite").glob("*.sql")):
+            if path.name in applied:
+                continue
+            logger.info("Applying SQLite migration %s", path.name)
+            conn.raw.execute("BEGIN IMMEDIATE")
+            # executescript commits an open transaction implicitly. Execute
+            # complete statements separately to keep schema+version atomic.
+            statement = ""
+            for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+                statement += line
+                if sqlite3.complete_statement(statement):
+                    conn.raw.execute(statement)
+                    statement = ""
+            if statement.strip():
+                raise ValueError(f"Incomplete SQLite migration: {path.name}")
+            conn.raw.execute("INSERT INTO schema_migrations (filename) VALUES (?)", (path.name,))
+            conn.commit()
 
 
 def _ensure_default_admin() -> None:
@@ -230,13 +309,13 @@ def update_sessions_role(user_id: int, role: str) -> None:
 def list_active_sessions(minutes: int = 15) -> list[dict]:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT * FROM sessions WHERE last_seen_at > now() - make_interval(mins => %s) "
+            "SELECT * FROM sessions WHERE last_seen_at > %s "
             "ORDER BY last_seen_at DESC",
-            (minutes,),
+            (datetime.now(timezone.utc) - timedelta(minutes=minutes),),
         )
         return cur.fetchall()
 
 
 def prune_old_sessions(days: int = 30) -> None:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM sessions WHERE last_seen_at < now() - make_interval(days => %s)", (days,))
+        cur.execute("DELETE FROM sessions WHERE last_seen_at < %s", (datetime.now(timezone.utc) - timedelta(days=days),))

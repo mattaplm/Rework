@@ -1,5 +1,5 @@
 # Doors Rework tracker — container image
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 # --- System deps + Microsoft ODBC Driver 17 for SQL Server ---------------
 # Needed for pyodbc's connection to the SyteLine ERP reports DB.
@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN useradd --create-home --uid 10001 rework
+USER rework
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 ENV PORT=5050
 EXPOSE 5050
 

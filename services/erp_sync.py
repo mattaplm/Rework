@@ -20,7 +20,7 @@ just means the order shipped -- exactly the kind of order a rework entry
 might still need to reference (see services/erp_lookup.py). Each day's sync
 only adds/refreshes; nothing already cached is ever removed by it.
 
-`sync_scrap_transactions` is wholesale-replaced every sync (TRUNCATE +
+`sync_scrap_transactions` is wholesale-replaced every sync (DELETE +
 reinsert, per erp_scrap_transactions's own migration-0001 comment) rather
 than upserted -- this is a transaction feed, not reference data with a
 stable key to upsert against, and the 2-year window it pulls is cheap
@@ -60,7 +60,7 @@ def sync_items() -> int:
                 row,
             )
         cur.execute(
-            "DELETE FROM items WHERE synced_at IS NOT NULL AND NOT (part_number = ANY(%s))",
+            f"DELETE FROM items WHERE synced_at IS NOT NULL AND NOT ({db.in_values('part_number', '%s')})",
             (part_numbers,),
         )
     return len(rows)
@@ -93,7 +93,7 @@ def sync_colours() -> int:
             )
         cur.execute(
             "UPDATE colours SET active = FALSE "
-            "WHERE synced_at IS NOT NULL AND NOT (name = ANY(%s))",
+            f"WHERE synced_at IS NOT NULL AND NOT ({db.in_values('name', '%s')})",
             (names,),
         )
     return len(names)
@@ -150,7 +150,7 @@ def sync_scrap_transactions() -> int:
     rows = erp.fetch_all(queries.SCRAP_TRANSACTIONS_QUERY, (date.today().year - 1,))
 
     with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute("TRUNCATE erp_scrap_transactions")
+        cur.execute("DELETE FROM erp_scrap_transactions")
         for row in rows:
             cur.execute(
                 """
