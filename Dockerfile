@@ -20,7 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd --create-home --uid 10001 rework
+# Source can arrive from a private (umask 077) deployment workspace. Ensure
+# image readability explicitly, including when Docker reuses a COPY layer.
+RUN chmod -R a+rX /app \
+    && useradd --create-home --uid 10001 rework
 USER rework
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
