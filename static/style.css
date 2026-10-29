@@ -400,3 +400,13 @@ table.admin-table td.colour-swatch-cell{width:20px;}
 /* Entry form: one block per material being reworked */
 .material-line{padding:0 0 14px; margin-bottom:14px; border-bottom:1px dashed var(--border, #e2e8f0);}
 .material-line:last-of-type{border-bottom:0; margin-bottom:8px;}
+
+/* "Update available -- click to refresh" (static/app.js) */
+.update-badge{
+  position:fixed; top:14px; right:16px; z-index:1000;
+  display:flex; align-items:center; gap:6px; padding:7px 14px; border:0; border-radius:999px;
+  background:var(--good); color:#fff; font:inherit; font-size:.85rem; font-weight:600; cursor:pointer;
+  box-shadow:0 2px 10px rgba(0,0,0,.2);
+}
+.update-badge:hover{background:color-mix(in srgb, var(--good) 85%, black);}
+:root[data-theme="dark"] .update-badge{color:#052e16;}

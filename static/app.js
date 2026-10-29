@@ -80,3 +80,40 @@ function debounce(fn, ms) {
     t = setTimeout(function () { fn.apply(ctx, args); }, ms);
   };
 }
+
+// "Update available -- click to refresh": polls /api/version and, once the
+// server's build differs from the one this tab first saw (i.e. a deploy
+// happened), shows a button that reloads the page. Same approach as the Paid
+// hours app. The first response is the baseline, so a tab opened after a
+// deploy never shows it.
+(function () {
+  var CHECK_MS = 5 * 60 * 1000;
+  var baseline = null, shown = false;
+
+  function showBadge() {
+    if (shown) return;
+    shown = true;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "update-badge";
+    btn.textContent = "\uD83D\uDD04 Update available \u2014 click to refresh";
+    btn.addEventListener("click", function () { window.location.reload(); });
+    document.body.appendChild(btn);
+  }
+
+  function check() {
+    fetch("/api/version", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (baseline === null) baseline = d.version;
+        else if (d.version !== baseline) showBadge();
+      })
+      .catch(function () { /* offline / transient -- try again next interval */ });
+  }
+
+  check();
+  setInterval(check, CHECK_MS);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") check();
+  });
+})();

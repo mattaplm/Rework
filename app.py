@@ -11,7 +11,7 @@ from flask import Flask, request
 
 import db
 from blueprints import admin, auth, dashboard, import_excel, pages, rework, turret, users
-from services import scheduled_sync
+from services import scheduled_sync, version
 from services.auth import current_user, touch_current_session
 
 load_dotenv()
@@ -44,13 +44,22 @@ def create_app() -> Flask:
             cur.fetchone()
         return {"status": "ok", "revision": os.getenv("REWORK_REVISION", "development")}
 
+    @app.get("/api/version")
+    def api_version():
+        """The running build, polled by static/app.js so an open tab can offer
+        "Update available -- click to refresh" after a deploy (same idea as the
+        Paid hours app). Public and DB-free so polling it costs nothing."""
+        return {"version": version.get_version()}
+
     @app.context_processor
     def inject_user():
         return {"current_user": current_user()}
 
     @app.after_request
     def after_request(response):
-        if not request.path.startswith("/static/"):
+        # The version poll is a background check, not user activity -- don't let
+        # it keep a session "active" or write to the DB every few minutes.
+        if not request.path.startswith("/static/") and request.path != "/api/version":
             touch_current_session()
         return response
 
