@@ -88,7 +88,9 @@ def resolve_piece_basis(payload: dict) -> dict:
     component, or more pieces scrapped than the door has)."""
     out = {"component": None, "job_material_qty": None, "pieces_per_door": None, "error": None}
     component = payload.get("component")
-    if payload.get("type") != "Replace Part" or component not in COMPONENTS or not payload.get("so_number"):
+    # An unset type (live preview before the operator reaches Type) is treated as
+    # Replace Part; create_event always has a real type by the time it saves.
+    if payload.get("type") not in (None, "", "Replace Part") or component not in COMPONENTS or not payload.get("so_number"):
         return out
     out["component"] = component
     try:
@@ -152,7 +154,7 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
                 "rework_date": payload["rework_date"],
                 "due_date": payload.get("due_date") or None,
                 "type": payload["type"],
-                "so_number": payload["so_number"].strip(),
+                "so_number": erp_lookup.canonical_so_number(payload["so_number"]),
                 "product_code": payload["product_code"].strip().upper(),
                 "quantity": quantity,
                 "height_mm": _optional_float(payload, "height_mm"),

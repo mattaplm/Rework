@@ -23,16 +23,40 @@ reasoning still applies to it unchanged.
 
 from __future__ import annotations
 
+import re
+
 import erp
 import queries
 import db
 from services import reference_data
 
 
-def lookup_order(so_number: str) -> dict | None:
+def normalize_so_number(so_number: str) -> str:
+    """What an operator types -> the SO number as SyteLine writes it. Digits
+    alone (with or without the S) are padded out: 566179 / s566179 ->
+    S000566179. Anything else (e.g. the fake `test` order) is just trimmed."""
+    text = (so_number or "").strip()
+    match = re.fullmatch(r"[sS]?(\d{1,9})", text)
+    return "S" + match.group(1).zfill(9) if match else text
+
+
+def _find_order_row(so_number: str) -> dict | None:
+    """Case-insensitive, and the S000 prefix is optional (see normalize_so_number)."""
     with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM synced_orders WHERE so_number = %s", (so_number.strip(),))
-        row = cur.fetchone()
+        cur.execute("SELECT * FROM synced_orders WHERE LOWER(so_number) = LOWER(%s)",
+                    (normalize_so_number(so_number),))
+        return cur.fetchone()
+
+
+def canonical_so_number(so_number: str) -> str:
+    """The cached order's own spelling of this SO number if there is one, so
+    entries are always saved as e.g. S000566179 however it was typed."""
+    row = _find_order_row(so_number)
+    return row["so_number"] if row else (so_number or "").strip()
+
+
+def lookup_order(so_number: str) -> dict | None:
+    row = _find_order_row(so_number)
     if not row:
         return None
 
@@ -45,6 +69,7 @@ def lookup_order(so_number: str) -> dict | None:
             full_door_material_cost = round(sum(float(m["qty"]) * float(m["unit_cost"]) for m in costed), 2)
 
     return {
+        "so_number": row["so_number"],
         "job_number": row.get("job_number"),
         "height": row.get("height"),
         "width": row.get("width"),

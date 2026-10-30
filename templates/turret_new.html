@@ -215,6 +215,7 @@
   }
 
   function applyOrder(order) {
+    if (order.so_number) soInput.value = order.so_number;   // show it as SyteLine spells it (S000...)
     var bomSheets = (order.materials || []).filter(function (m) { return SHEET_CODES.indexOf(m.part_number) !== -1; });
 
     soStatus.textContent = "Loaded " + (order.job_number || "order")

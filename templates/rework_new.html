@@ -296,7 +296,10 @@
   // Which-piece choice only applies to Replace Part; the hint says how many of
   // that piece this door has (Admin -> Door Codes) once the order is known.
   function syncComponentField(line) {
-    var show = state.type === "Replace Part";
+    // Shown until a type is picked too (Type is further down the page, so most
+    // operators enter the material first) -- only Rework / Recoat and Scrap
+    // Entire Door have no use for it.
+    var show = !state.type || state.type === "Replace Part";
     line.el.querySelector(".component-field").style.display = show ? "" : "none";
     if (!show) { line.comp.value = ""; line.component = ""; }
     var dp = state.soOrder && state.soOrder.door_pieces ? state.soOrder.door_pieces : null;
@@ -359,6 +362,7 @@
   }
 
   function applyOrder(order) {
+    if (order.so_number) soInput.value = order.so_number;   // show it as SyteLine spells it (S000...)
     state.soOrder = order;
     state.jobMaterials = order.materials || [];
     document.getElementById("jobNumber").value = order.job_number || "";
@@ -437,7 +441,7 @@
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (gen !== formGeneration || lines.indexOf(line) === -1) return;
       line.preview = data;
-      if (!line.compTouched && !line.component && state.type === "Replace Part") {
+      if (!line.compTouched && !line.component && (!state.type || state.type === "Replace Part")) {
         var guess = guessComponent(data.description);
         if (guess) {
           line.component = guess; line.comp.value = guess;
