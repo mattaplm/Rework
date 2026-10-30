@@ -10,6 +10,7 @@
   <button class="tab-btn" data-tab="reasons">Reasons</button>
   <button class="tab-btn" data-tab="door_codes">Door Codes</button>
   <button class="tab-btn" data-tab="work_centres">Work Centres</button>
+  <button class="tab-btn" data-tab="people">People</button>
   <button class="tab-btn" data-tab="colours">Colours</button>
   <button class="tab-btn" data-tab="items">Items</button>
   <button class="tab-btn" data-tab="users">Users</button>
@@ -212,10 +213,10 @@
 </div>
 
 <!-- ───────────────────────── Work Centres ───────────────────────── -->
-{% for table, label, items in [("work_centres", "Work Centre", work_centres)] %}
+{% for table, label, items in [("work_centres", "Work Centre", work_centres), ("people", "Person", people)] %}
 <div class="tab-panel" data-panel="{{ table }}">
   <div class="card">
-    <h2>{{ label }}s</h2>
+    <h2>{{ "People" if table == "people" else label ~ "s" }}{% if table == "people" %} <span class="optional">who fills out the rework form on the floor — new names typed on the entry form are added here automatically</span>{% endif %}</h2>
     <table class="admin-table">
       <thead><tr><th>Name</th><th>Sort order</th><th>Status</th><th></th></tr></thead>
       <tbody>
@@ -249,7 +250,7 @@
       <input type="number" name="sort_order" value="{{ (items|map(attribute='sort_order')|max|default(0, true) or 0) + 1 }}" title="Sort order" style="width:80px;">
       <button type="submit" class="btn-sm accent">Add {{ label|lower }}</button>
     </form>
-    <p class="hint" style="margin-top:10px;">Renaming also updates every past entry that used the old name — it's a rename everywhere, not a new option alongside the old one. Sort order controls the list here and in the entry form's dropdown (lowest first); ties break alphabetically.</p>
+    <p class="hint" style="margin-top:10px;">{% if table == "people" %}Fix a misspelling here by renaming it. Deactivate someone to drop them from the entry form's list (past entries keep their name). {% endif %}Renaming also updates every past entry that used the old name — it's a rename everywhere, not a new option alongside the old one. Sort order controls the list here and in the entry form's dropdown (lowest first); ties break alphabetically.</p>
   </div>
 </div>
 {% endfor %}

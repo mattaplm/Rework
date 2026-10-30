@@ -69,6 +69,16 @@
     <div class="card">
       <h2>What happened</h2>
 
+      <div class="field" id="personField">
+        <label for="personInput">Person <span class="required-mark">*</span> <span class="optional">who filled out the rework form</span></label>
+        <div class="combo" id="personCombo">
+          <input type="text" id="personInput" placeholder="Pick a name, or type a new one…" autocomplete="off">
+          <ul class="combo-list" id="personList" hidden></ul>
+        </div>
+        <p class="hint" id="personHint" hidden></p>
+        <p class="field-error">Required — who filled out the rework form?</p>
+      </div>
+
       <div class="field" id="typeField">
         <label>Type <span class="required-mark">*</span></label>
         <div class="segmented" id="typeSeg" role="group" aria-label="Rework type">
@@ -137,6 +147,7 @@
 
   var REASONS = {{ reasons|tojson }};
   var COLOURS = {{ colours|tojson }};
+  var PEOPLE = {{ people|tojson }};
 
   var state = { type: null, reason: null, soOrder: null, jobMaterials: null };
   // Bumped by resetForm() so a cost-preview/product-search fetch already in
@@ -190,6 +201,25 @@
       document.getElementById("sourceChipText").textContent = r.source;
       setFieldValid("reasonField", true);
     });
+
+  // ── Person combo: pick from the list or type a new name. A new name is saved
+  //    (server-side, case-insensitively matched to existing ones) when the entry
+  //    is logged, so there's never a second spelling of the same person. ──
+  var personInput = document.getElementById("personInput");
+  var personHint = document.getElementById("personHint");
+  function personKnown(v) {
+    return PEOPLE.some(function (n) { return n.toLowerCase() === v.toLowerCase(); });
+  }
+  function syncPersonHint() {
+    var v = personInput.value.trim().replace(/\s+/g, " ");
+    personHint.hidden = !v || personKnown(v);
+    if (!personHint.hidden) personHint.textContent = "New name \u2014 \u201C" + v + "\u201D will be added to the list when you log this entry.";
+    if (v) setFieldValid("personField", true);
+  }
+  var personCombo = makeCombo(personInput, document.getElementById("personList"), PEOPLE,
+    function (n) { return n; }, null,
+    function (n) { personInput.value = n; syncPersonHint(); });
+  personInput.addEventListener("input", syncPersonHint);
 
   // ── Colour combo ──
   var colourInput = document.getElementById("colourInput");
@@ -508,6 +538,7 @@
   function validate() {
     var ok = true;
     if (!state.type) { setFieldValid("typeField", false); ok = false; }
+    if (!personInput.value.trim()) { setFieldValid("personField", false); ok = false; }
     if (!state.reason) { setFieldValid("reasonField", false); ok = false; }
     if (!doorTypeSel.value) { setFieldValid("doorTypeField", false); ok = false; }
     if (!workCentreSel.value) { setFieldValid("workCentreField", false); ok = false; }
@@ -537,6 +568,7 @@
       body: JSON.stringify({
         rework_date: today,
         type: state.type,
+        person: personInput.value.trim(),
         so_number: document.getElementById("soNumber").value.trim(),
         materials: lines.map(function (l) {
           return { product_code: l.code.trim(), quantity: l.quantity, component: l.component || null };
@@ -558,6 +590,8 @@
           showToast("Couldn't save — " + (errs[0] || "check the highlighted fields."), true);
           return;
         }
+        var saved = res.data.event && res.data.event.entered_by_name;
+        if (saved && !personKnown(saved)) { PEOPLE.push(saved); PEOPLE.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; }); personCombo.refresh(PEOPLE); }
         showToast(res.data.events && res.data.events.length > 1 ? res.data.events.length + " materials logged." : "Entry logged.");
         resetForm();
       })
@@ -579,11 +613,12 @@
     Array.prototype.forEach.call(typeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
     document.getElementById("typeHint").textContent = "Choose what happened to the door.";
     document.getElementById("sourceChip").hidden = true;
+    personHint.hidden = true;
     document.getElementById("soStatus").textContent = "";
     document.getElementById("jobNumber").value = "";
     document.getElementById("colourErpHint").hidden = true;
     document.getElementById("productScopeHint").hidden = true;
-    ["typeField", "reasonField", "doorTypeField", "workCentreField", "soField", "colourField", "heightField", "widthField"]
+    ["typeField", "personField", "reasonField", "doorTypeField", "workCentreField", "soField", "colourField", "heightField", "widthField"]
       .forEach(function (id) { setFieldValid(id, true); });
     renderSummary();
     // form.reset() doesn't fire "input" events, so the TEST ORDER banner

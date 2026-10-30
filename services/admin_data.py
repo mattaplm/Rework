@@ -65,7 +65,7 @@ def save_reason(reason_id: int, reason: str, code: str | None, source: str, faul
 
 # ── Work centres (door_types merged into cpq_door_codes.family_name below) ──
 
-_NAMED_TABLES = {"work_centres"}
+_NAMED_TABLES = {"work_centres", "people"}
 
 
 def _check_table(table: str) -> str:
@@ -99,7 +99,7 @@ def set_named_active(table: str, name: str, active: bool) -> None:
         cur.execute(f"UPDATE {table} SET active = %s WHERE name = %s", (active, name))
 
 
-_NAMED_EVENT_COLUMN = {"work_centres": "work_centre"}
+_NAMED_EVENT_COLUMN = {"work_centres": "work_centre", "people": "entered_by_name"}
 
 
 def save_named(table: str, old_name: str, new_name: str, sort_order: int) -> int:

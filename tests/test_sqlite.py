@@ -160,7 +160,10 @@ def test_http_login_pin_change_and_all_pages(sqlite_store, monkeypatch):
     assert client.post("/change-password", data={"new_password": "5678", "confirm": "5678"}).status_code == 302
     for path in ("/dashboard", "/rework", "/rework/new", "/turret", "/turret/new", "/admin", "/import"):
         assert client.get(path).status_code == 200, path
-    assert client.post("/api/rework-events", json=payload()).status_code == 200
+    assert client.post("/api/rework-events", json=payload()).status_code == 400  # Person is required
+    posted = client.post("/api/rework-events", json={**payload(), "person": "gary"})
+    assert posted.status_code == 200
+    assert posted.get_json()["event"]["entered_by_name"] == "Gary"  # matched/created case-insensitively
     assert client.get("/rework").status_code == 200
     assert client.post("/logout").status_code == 302
     assert client.get("/api/users").status_code == 401

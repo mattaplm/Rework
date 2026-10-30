@@ -132,3 +132,31 @@ def get_door_pieces(cpq_code: str | None) -> dict | None:
         cur.execute("SELECT stile_pieces, rail_pieces FROM cpq_door_codes WHERE cpq_code = %s", (cpq_code.strip().upper(),))
         row = cur.fetchone()
     return {"Stile": row["stile_pieces"], "Rail": row["rail_pieces"]} if row else None
+
+
+def list_people() -> list[str]:
+    """Active names for the entry form's Person dropdown."""
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT name FROM people WHERE active ORDER BY LOWER(name)")
+        return [r["name"] for r in cur.fetchall()]
+
+
+def resolve_person(name: str) -> str:
+    """The one canonical spelling of a person: an existing name matches
+    case-insensitively (typing "gary" gives "Gary"), otherwise the name is
+    added to the list. A deactivated person typed again is brought back."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        return ""
+    if name.islower():
+        name = name.title()
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT name, active FROM people WHERE LOWER(name) = LOWER(%s)", (name,))
+        row = cur.fetchone()
+        if not row:
+            cur.execute("INSERT INTO people (name) VALUES (%s) ON CONFLICT DO NOTHING", (name,))
+            cur.execute("SELECT name, active FROM people WHERE LOWER(name) = LOWER(%s)", (name,))
+            row = cur.fetchone()
+        elif not row["active"]:
+            cur.execute("UPDATE people SET active = TRUE WHERE LOWER(name) = LOWER(%s)", (name,))
+        return row["name"]

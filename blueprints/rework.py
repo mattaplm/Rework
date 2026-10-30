@@ -81,6 +81,7 @@ def new_page():
         door_types=reference_data.list_door_types(),
         work_centres=reference_data.list_work_centres(),
         colours=reference_data.list_colours(),
+        people=reference_data.list_people(),
         test_so_number=test_data.SO_NUMBER,
     )
 

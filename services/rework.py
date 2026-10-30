@@ -142,12 +142,12 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
                 rework_date, due_date, type, so_number, product_code, quantity,
                 height_mm, width_mm, cut_length_mm,
                 qty_to_remove, material_cost, component,
-                reason, source, colour, door_type, work_centre, notes, entered_by_user_id
+                reason, source, colour, door_type, work_centre, notes, entered_by_user_id, entered_by_name
             ) VALUES (
                 %(rework_date)s, %(due_date)s, %(type)s, %(so_number)s, %(product_code)s, %(quantity)s,
                 %(height_mm)s, %(width_mm)s, %(cut_length_mm)s,
                 %(qty_to_remove)s, %(material_cost)s, %(component)s,
-                %(reason)s, %(source)s, %(colour)s, %(door_type)s, %(work_centre)s, %(notes)s, %(entered_by_user_id)s
+                %(reason)s, %(source)s, %(colour)s, %(door_type)s, %(work_centre)s, %(notes)s, %(entered_by_user_id)s, %(entered_by_name)s
             ) RETURNING *
             """,
             {
@@ -170,6 +170,7 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
                 "work_centre": payload["work_centre"],
                 "notes": (payload.get("notes") or "").strip() or None,
                 "entered_by_user_id": user_id,
+                "entered_by_name": (payload.get("person") or "").strip() or None,
             },
         )
         return cur.fetchone()
@@ -190,6 +191,9 @@ def create_events(payload: dict, user_id: int | None) -> list[dict]:
     merged = [{**base, **{k: line.get(k) for k in LINE_FIELDS}} for line in lines]
 
     errors: dict[str, str] = {}
+    person = " ".join(str(base.get("person") or "").split())
+    if not person:
+        errors["person"] = "Who filled out the rework form? Required."
     if len(merged) > 1 and base.get("type") == "Scrap Entire Door":
         errors["materials"] = "Scrap Entire Door is a single line (the whole door)."
     for i, line in enumerate(merged):
@@ -204,6 +208,9 @@ def create_events(payload: dict, user_id: int | None) -> list[dict]:
     if errors:
         raise ValidationError(errors)
 
+    person = reference_data.resolve_person(person)  # one spelling per person; adds a new name to the list
+    for line in merged:
+        line["person"] = person
     return [create_event(line, user_id, charge_flat=(i == 0)) for i, line in enumerate(merged)]
 
 
