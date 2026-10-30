@@ -230,7 +230,7 @@
     el.innerHTML = lineHtml();
     linesBox.appendChild(el);
     var line = {
-      el: el, code: "", quantity: 1, component: "", preview: null,
+      el: el, code: "", quantity: 1, component: "", compTouched: false, preview: null,
       input: el.querySelector(".product-input"),
       qty: el.querySelector(".qty-input"),
       comp: el.querySelector(".component-select"),
@@ -239,7 +239,11 @@
     };
     line.combo = makeCombo(line.input, el.querySelector(".combo-list"), state.jobMaterials || [],
       function (p) { return p.part_number; }, function (p) { return p.description; },
-      function (p) { line.input.value = p.part_number; line.code = p.part_number; line.recalc(); });
+      function (p) {
+        line.input.value = p.part_number; line.code = p.part_number;
+        if (!line.compTouched) { line.component = ""; line.comp.value = ""; syncComponentField(line); }
+        line.recalc();
+      });
 
     var fetchProducts = debounce(function (q) {
       if (q.length < 2) { line.combo.refresh([]); return; }
@@ -254,6 +258,8 @@
     }, 250);
     line.input.addEventListener("input", function () {
       line.code = line.input.value;
+      // A different part means any auto-picked Stile/Rail no longer applies.
+      if (!line.compTouched) { line.component = ""; line.comp.value = ""; syncComponentField(line); }
       // Once a Sales Order has resolved, the combo is scoped to that job's own
       // materials (see applyOrder) -- makeCombo filters locally against the
       // list refresh() was last given, so skip the full item-master search.
@@ -265,7 +271,7 @@
     el.querySelector(".qty-minus").addEventListener("click", function () { setQty(Number(line.qty.value) - 1); });
     el.querySelector(".qty-plus").addEventListener("click", function () { setQty(Number(line.qty.value) + 1); });
     line.qty.addEventListener("input", function () { line.quantity = Math.max(1, Number(line.qty.value) || 1); line.recalc(); });
-    line.comp.addEventListener("change", function () { line.component = line.comp.value; syncComponentField(line); line.recalc(); });
+    line.comp.addEventListener("change", function () { line.compTouched = true; line.component = line.comp.value; syncComponentField(line); line.recalc(); });
     el.querySelector(".remove-line").addEventListener("click", function () { removeLine(line); });
 
     line.recalc = debounce(function () { previewLine(line); }, 200);
@@ -293,10 +299,26 @@
     var show = state.type === "Replace Part";
     line.el.querySelector(".component-field").style.display = show ? "" : "none";
     if (!show) { line.comp.value = ""; line.component = ""; }
-    var pieces = state.soOrder && state.soOrder.door_pieces ? state.soOrder.door_pieces[line.component] : null;
-    line.el.querySelector(".component-hint").textContent = line.component && pieces != null
-      ? "This door has " + pieces + " " + line.component.toLowerCase() + (pieces === 1 ? "" : "s") + "; quantity is how many you’re replacing."
-      : "";
+    var dp = state.soOrder && state.soOrder.door_pieces ? state.soOrder.door_pieces : null;
+    var pieces = dp ? dp[line.component] : null;
+    var hint = "";
+    if (show && line.component && pieces != null) {
+      hint = "This door has " + pieces + " " + line.component.toLowerCase() + (pieces === 1 ? "" : "s") + "; quantity is how many you’re replacing.";
+    } else if (show && !line.component && dp && (dp.Stile || dp.Rail)) {
+      hint = "Pick Stile or Rail if this is a cut piece — otherwise the whole item quantity is written off.";
+    }
+    line.el.querySelector(".component-hint").textContent = hint;
+  }
+
+  // Pre-selects Stile/Rail for a cut extrusion so the share-of-length maths
+  // isn't skipped by accident (the operator can still change it). Fittings
+  // named after a stile/rail -- plugs, caps, blocks, stiffeners -- are skipped.
+  function guessComponent(description) {
+    var d = String(description || "").toLowerCase();
+    if (!d || /plug|cap\b|endcap|block|stiffener|bead|seal|screw|tapper|jointer|spigot|insert|strip|glue|tape/.test(d)) return "";
+    if (/\bstile\b/.test(d)) return "Stile";
+    if (/\brail\b/.test(d)) return "Rail";
+    return "";
   }
 
   function recalcAll() { lines.forEach(function (l) { l.recalc(); }); }
@@ -415,6 +437,15 @@
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (gen !== formGeneration || lines.indexOf(line) === -1) return;
       line.preview = data;
+      if (!line.compTouched && !line.component && state.type === "Replace Part") {
+        var guess = guessComponent(data.description);
+        if (guess) {
+          line.component = guess; line.comp.value = guess;
+          syncComponentField(line);
+          line.recalc();   // re-preview with the piece applied
+          return;
+        }
+      }
       renderLine(line);
       renderSummary();
     });
@@ -434,7 +465,10 @@
       box.hidden = false;
       box.innerHTML = "<span></span><span></span>";
       box.children[0].textContent = data.description || "";
-      box.children[1].textContent = data.qty_to_remove != null ? ("Qty to remove " + data.qty_to_remove) : "";
+      var why = basis && basis.pieces_per_door
+        ? " (" + line.quantity + " of " + basis.pieces_per_door + " " + basis.component.toLowerCase() + (basis.pieces_per_door === 1 ? "" : "s") + ")"
+        : "";
+      box.children[1].textContent = data.qty_to_remove != null ? ("Qty to remove " + data.qty_to_remove + why) : "";
       line.field.classList.remove("invalid");
     } else if (scrapWithJobCost) {
       box.hidden = false;
