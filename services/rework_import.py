@@ -102,6 +102,7 @@ def import_workbook(xlsx_path: str, sheet_name: str = "REWORK") -> ImportResult:
         cur.execute("SELECT reason, source FROM rework_reasons")
         reason_source = {r["reason"]: r["source"] for r in cur.fetchall()}
 
+        seen_in_file: dict[str, int] = {}
         for raw, cleaned in parse_workbook(xlsx_path, sheet_name):
             if cleaned is None:
                 result.skipped_invalid += 1
@@ -109,6 +110,13 @@ def import_workbook(xlsx_path: str, sheet_name: str = "REWORK") -> ImportResult:
                     result.invalid_examples.append(str(raw[:6]))
                 continue
             row_hash = _row_hash(raw)
+            # Two identical rows in the sheet are two real entries (ERP wrote
+            # both off), not a re-upload -- suffix repeats within this file so
+            # they get distinct hashes. First occurrence keeps the plain hash,
+            # so already-imported rows still dedup against it.
+            seen_in_file[row_hash] = seen_in_file.get(row_hash, 0) + 1
+            if seen_in_file[row_hash] > 1:
+                row_hash = _row_hash((row_hash, seen_in_file[row_hash]))
             cur.execute("SAVEPOINT row_sp")
             try:
                 cur.execute(
