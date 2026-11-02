@@ -177,27 +177,35 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
 
 
 LINE_FIELDS = ("product_code", "quantity", "component")
+# Set per material line (the form asks for them on each line); a line that
+# leaves one out falls back to the top-level value, as older clients send.
+LINE_OVERRIDE_FIELDS = ("type", "person", "reason")
 
 
 def create_events(payload: dict, user_id: int | None) -> list[dict]:
     """One entry can rework several materials (1, 2, 3 or more). The form
     sends the shared fields once plus `materials: [{product_code, quantity,
-    component}, ...]`; each material becomes its own rework_events row (so the
-    log, write-off tab and dashboard keep working per part). Every line is
-    validated before any is written. A payload with no `materials` key is a
-    single line taken from the top-level fields, as before."""
+    component, type, person, reason}, ...]`; each material becomes its own
+    rework_events row (so the log, write-off tab and dashboard keep working per
+    part). Every line is validated before any is written. A payload with no
+    `materials` key is a single line taken from the top-level fields, as before."""
     base = {k: v for k, v in payload.items() if k != "materials"}
     lines = payload.get("materials") or [{k: payload.get(k) for k in LINE_FIELDS}]
-    merged = [{**base, **{k: line.get(k) for k in LINE_FIELDS}} for line in lines]
+    merged = []
+    for line in lines:
+        row = {**base, **{k: line.get(k) for k in LINE_FIELDS}}
+        for k in LINE_OVERRIDE_FIELDS:
+            row[k] = line.get(k) or base.get(k)
+        merged.append(row)
 
     errors: dict[str, str] = {}
-    person = " ".join(str(base.get("person") or "").split())
-    if not person:
-        errors["person"] = "Who filled out the rework form? Required."
-    if len(merged) > 1 and base.get("type") == "Scrap Entire Door":
+    if len(merged) > 1 and any(m.get("type") == "Scrap Entire Door" for m in merged):
         errors["materials"] = "Scrap Entire Door is a single line (the whole door)."
     for i, line in enumerate(merged):
         prefix = f"line{i + 1}." if len(merged) > 1 else ""
+        line["person"] = " ".join(str(line.get("person") or "").split())
+        if not line["person"]:
+            errors[prefix + "person"] = "Who filled out the rework form? Required."
         try:
             _validate(line)
             basis = resolve_piece_basis(line)
@@ -208,10 +216,11 @@ def create_events(payload: dict, user_id: int | None) -> list[dict]:
     if errors:
         raise ValidationError(errors)
 
-    person = reference_data.resolve_person(person)  # one spelling per person; adds a new name to the list
     for line in merged:
-        line["person"] = person
-    return [create_event(line, user_id, charge_flat=(i == 0)) for i, line in enumerate(merged)]
+        line["person"] = reference_data.resolve_person(line["person"])  # one spelling per person; adds a new name to the list
+    # The flat recoat charge is once per entry: only the first Rework / Recoat line pays it.
+    first_recoat = next((i for i, m in enumerate(merged) if m["type"] == "Rework / Recoat"), None)
+    return [create_event(line, user_id, charge_flat=(i == first_recoat)) for i, line in enumerate(merged)]
 
 
 def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) -> list[dict]:

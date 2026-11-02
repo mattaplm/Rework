@@ -67,41 +67,7 @@
     </div>
 
     <div class="card">
-      <h2>What happened</h2>
-
-      <div class="field" id="personField">
-        <label for="personInput">Person <span class="required-mark">*</span> <span class="optional">who filled out the rework form</span></label>
-        <div class="combo" id="personCombo">
-          <input type="text" id="personInput" placeholder="Pick a name, or type a new one…" autocomplete="off">
-          <ul class="combo-list" id="personList" hidden></ul>
-        </div>
-        <p class="hint" id="personHint" hidden></p>
-        <p class="field-error">Required — who filled out the rework form?</p>
-      </div>
-
-      <div class="field" id="typeField">
-        <label>Type <span class="required-mark">*</span></label>
-        <div class="segmented" id="typeSeg" role="group" aria-label="Rework type">
-          <button type="button" class="seg-btn" data-sev="good" data-value="Rework / Recoat" aria-pressed="false">
-            <span class="dot"></span>Rework / Recoat</button>
-          <button type="button" class="seg-btn" data-sev="warn" data-value="Replace Part" aria-pressed="false">
-            <span class="dot"></span>Replace Part</button>
-          <button type="button" class="seg-btn" data-sev="crit" data-value="Scrap Entire Door" aria-pressed="false">
-            <span class="dot"></span>Scrap Entire Door</button>
-        </div>
-        <p class="hint" id="typeHint">Choose what happened to the door.</p>
-        <p class="field-error">Pick a type before logging this entry.</p>
-      </div>
-
-      <div class="field" id="reasonField">
-        <label for="reasonInput">Reason <span class="required-mark">*</span></label>
-        <div class="combo" id="reasonCombo">
-          <input type="text" id="reasonInput" placeholder="Search reasons…" autocomplete="off">
-          <ul class="combo-list" id="reasonList" hidden></ul>
-        </div>
-        <span class="chip" id="sourceChip" hidden>Source: <span id="sourceChipText"></span></span>
-        <p class="field-error">Select a reason from the list.</p>
-      </div>
+      <h2>Work centre</h2>
 
       <div class="field" id="workCentreField">
         <label for="workCentre">Work centre <span class="required-mark">*</span></label>
@@ -149,77 +115,27 @@
   var COLOURS = {{ colours|tojson }};
   var PEOPLE = {{ people|tojson }};
 
-  var state = { type: null, reason: null, soOrder: null, jobMaterials: null };
+  var state = { soOrder: null, jobMaterials: null };
   // Bumped by resetForm() so a cost-preview/product-search fetch already in
   // flight when the form is cleared can't repopulate the item-match box or
   // product list after the fact -- each async callback checks its own
   // snapshot against the current value before touching the DOM.
   var formGeneration = 0;
 
-  // ── Type segmented control ──
-  var typeSeg = document.getElementById("typeSeg");
   var TYPE_HINTS = {
     "Rework / Recoat": "Flat $132 rework charge, no material cost.",
     "Replace Part": "Costed from the matched part’s ERP standard cost.",
     "Scrap Entire Door": "Whole door written off — product code is forced to DOOR."
   };
-  Array.prototype.forEach.call(typeSeg.children, function (btn) {
-    btn.addEventListener("click", function () {
-      state.type = btn.dataset.value;
-      Array.prototype.forEach.call(typeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
-      btn.setAttribute("aria-pressed", "true");
-      document.getElementById("typeHint").textContent = TYPE_HINTS[state.type];
-      setFieldValid("typeField", true);
-      // Scrap Entire Door always costs the whole door, never a specific part
-      // -- force DOOR even over a part already picked for Rework/Replace.
-      // Switching back away from Scrap Entire Door clears that forced DOOR
-      // back out so the operator has to pick the real part Rework/Replace
-      // needs, instead of silently submitting against DOOR.
-      if (state.type === "Scrap Entire Door") {
-        while (lines.length > 1) removeLine(lines[lines.length - 1]);
-        lines[0].input.value = "DOOR";
-        lines[0].code = "DOOR";
-      } else if (lines[0].input.value === "DOOR") {
-        lines[0].input.value = "";
-        lines[0].code = "";
-      }
-      document.getElementById("addMaterialBtn").style.display = state.type === "Scrap Entire Door" ? "none" : "";
-      lines.forEach(syncComponentField);
-      recalcAll();
-    });
-  });
+  var NEW_NAME_HINT = function (v) { return "New name — “" + v + "” will be added to the list when you log this entry."; };
 
-  // ── Reason combo ──
-  var reasonInput = document.getElementById("reasonInput");
-  makeCombo(reasonInput, document.getElementById("reasonList"), REASONS,
-    function (r) { return r.reason; }, function (r) { return r.source; },
-    function (r) {
-      reasonInput.value = r.reason;
-      state.reason = r.reason;
-      var chip = document.getElementById("sourceChip");
-      chip.hidden = false;
-      document.getElementById("sourceChipText").textContent = r.source;
-      setFieldValid("reasonField", true);
-    });
-
-  // ── Person combo: pick from the list or type a new name. A new name is saved
-  //    (server-side, case-insensitively matched to existing ones) when the entry
-  //    is logged, so there's never a second spelling of the same person. ──
-  var personInput = document.getElementById("personInput");
-  var personHint = document.getElementById("personHint");
+  // Person is a pick-or-type combo on every material line. A new name is saved
+  // (server-side, case-insensitively matched to existing ones) when the entry
+  // is logged, so there's never a second spelling of the same person.
   function personKnown(v) {
     return PEOPLE.some(function (n) { return n.toLowerCase() === v.toLowerCase(); });
   }
-  function syncPersonHint() {
-    var v = personInput.value.trim().replace(/\s+/g, " ");
-    personHint.hidden = !v || personKnown(v);
-    if (!personHint.hidden) personHint.textContent = "New name \u2014 \u201C" + v + "\u201D will be added to the list when you log this entry.";
-    if (v) setFieldValid("personField", true);
-  }
-  var personCombo = makeCombo(personInput, document.getElementById("personList"), PEOPLE,
-    function (n) { return n; }, null,
-    function (n) { personInput.value = n; syncPersonHint(); });
-  personInput.addEventListener("input", syncPersonHint);
+  function isScrap(l) { return l.type === "Scrap Entire Door"; }
 
   // ── Colour combo ──
   var colourInput = document.getElementById("colourInput");
@@ -235,13 +151,34 @@
   var lines = [];
 
   function lineHtml() {
-    return '<div class="field">' +
+    return '<div class="row2">' +
+        '<div class="field person-field">' +
+          '<label>Person <span class="required-mark">*</span> <span class="optional">who filled out the rework form</span></label>' +
+          '<div class="combo"><input type="text" class="person-input" placeholder="Pick a name, or type a new one…" autocomplete="off"><ul class="combo-list" hidden></ul></div>' +
+          '<p class="hint person-hint" hidden></p>' +
+          '<p class="field-error">Required — who filled out the rework form?</p></div>' +
+        '<div class="field reason-field">' +
+          '<label>Reason <span class="required-mark">*</span></label>' +
+          '<div class="combo"><input type="text" class="reason-input" placeholder="Search reasons…" autocomplete="off"><ul class="combo-list" hidden></ul></div>' +
+          '<span class="chip reason-chip" hidden>Source: <span class="reason-chip-text"></span></span>' +
+          '<p class="field-error">Select a reason from the list.</p></div>' +
+      '</div>' +
+      '<div class="field">' +
         '<label>Quantity <span class="required-mark">*</span></label>' +
         '<div class="stepper" style="max-width:200px;">' +
           '<button type="button" class="qty-minus" aria-label="Decrease quantity">−</button>' +
           '<input type="number" class="qty-input" value="1" min="1" inputmode="numeric">' +
           '<button type="button" class="qty-plus" aria-label="Increase quantity">+</button>' +
         '</div></div>' +
+      '<div class="field type-field">' +
+        '<label>Type <span class="required-mark">*</span></label>' +
+        '<div class="segmented" role="group" aria-label="Rework type">' +
+          '<button type="button" class="seg-btn" data-sev="good" data-value="Rework / Recoat" aria-pressed="false"><span class="dot"></span>Rework / Recoat</button>' +
+          '<button type="button" class="seg-btn" data-sev="warn" data-value="Replace Part" aria-pressed="false"><span class="dot"></span>Replace Part</button>' +
+          '<button type="button" class="seg-btn" data-sev="crit" data-value="Scrap Entire Door" aria-pressed="false"><span class="dot"></span>Scrap Entire Door</button>' +
+        '</div>' +
+        '<p class="hint type-hint">Choose what happened to this material.</p>' +
+        '<p class="field-error">Pick a type for this material.</p></div>' +
       '<div class="field product-field">' +
         '<label>Product code <span class="required-mark">*</span></label>' +
         '<div class="combo"><input type="text" class="product-input" placeholder="Start typing a part number…" autocomplete="off"><ul class="combo-list" hidden></ul></div>' +
@@ -259,14 +196,76 @@
     el.className = "material-line";
     el.innerHTML = lineHtml();
     linesBox.appendChild(el);
+    var prev = lines[lines.length - 1];
     var line = {
       el: el, code: "", quantity: 1, component: "", compTouched: false, preview: null,
+      type: null, reason: null, personTouched: false,
       input: el.querySelector(".product-input"),
       qty: el.querySelector(".qty-input"),
       comp: el.querySelector(".component-select"),
       field: el.querySelector(".product-field"),
-      box: el.querySelector(".item-match")
+      box: el.querySelector(".item-match"),
+      typeField: el.querySelector(".type-field"),
+      typeSeg: el.querySelector(".segmented"),
+      reasonField: el.querySelector(".reason-field"),
+      reasonInput: el.querySelector(".reason-input"),
+      personField: el.querySelector(".person-field"),
+      personInput: el.querySelector(".person-input"),
+      personHint: el.querySelector(".person-hint")
     };
+
+    // Reason
+    makeCombo(line.reasonInput, el.querySelector(".reason-field .combo-list"), REASONS,
+      function (r) { return r.reason; }, function (r) { return r.source; },
+      function (r) {
+        line.reasonInput.value = r.reason;
+        line.reason = r.reason;
+        el.querySelector(".reason-chip").hidden = false;
+        el.querySelector(".reason-chip-text").textContent = r.source;
+        line.reasonField.classList.remove("invalid");
+      });
+    // Typing after a pick means the old pick no longer stands.
+    line.reasonInput.addEventListener("input", function () {
+      if (line.reason && line.reasonInput.value !== line.reason) {
+        line.reason = null;
+        el.querySelector(".reason-chip").hidden = true;
+      }
+    });
+
+    // Person: the first line's pick fills the later lines that haven't been
+    // changed by hand; a new line starts with the previous line's person.
+    function syncPersonHint() {
+      var v = line.personInput.value.trim().replace(/\s+/g, " ");
+      line.personHint.hidden = !v || personKnown(v);
+      if (!line.personHint.hidden) line.personHint.textContent = NEW_NAME_HINT(v);
+      if (v) line.personField.classList.remove("invalid");
+    }
+    function propagatePerson() {
+      if (line !== lines[0]) return;
+      lines.slice(1).forEach(function (l) {
+        if (!l.personTouched) { l.personInput.value = line.personInput.value; l.syncPerson(); }
+      });
+    }
+    line.syncPerson = syncPersonHint;
+    line.personCombo = makeCombo(line.personInput, el.querySelector(".person-field .combo-list"), PEOPLE,
+      function (n) { return n; }, null,
+      function (n) {
+        line.personInput.value = n;
+        if (line !== lines[0]) line.personTouched = true;
+        syncPersonHint(); propagatePerson();
+      });
+    line.personInput.addEventListener("input", function () {
+      if (line !== lines[0]) line.personTouched = true;
+      syncPersonHint();
+    });
+    line.personInput.addEventListener("change", propagatePerson);
+    if (prev && prev.personInput.value.trim()) { line.personInput.value = prev.personInput.value; syncPersonHint(); }
+
+    // Type
+    Array.prototype.forEach.call(line.typeSeg.children, function (btn) {
+      btn.addEventListener("click", function () { setLineType(line, btn.dataset.value); });
+    });
+
     line.combo = makeCombo(line.input, el.querySelector(".combo-list"), state.jobMaterials || [],
       function (p) { return p.part_number; }, function (p) { return p.description; },
       function (p) {
@@ -316,6 +315,37 @@
     lines.splice(lines.indexOf(line), 1);
     line.el.remove();
     syncRemoveButtons();
+    syncAddButton();
+    renderSummary();
+  }
+
+  // Scrap Entire Door is the whole door, so it stands alone: no further
+  // materials can be added while a line is set to it.
+  function syncAddButton() {
+    document.getElementById("addMaterialBtn").style.display = lines.some(isScrap) ? "none" : "";
+  }
+
+  function setLineType(line, type) {
+    line.type = type;
+    Array.prototype.forEach.call(line.typeSeg.children, function (b) {
+      b.setAttribute("aria-pressed", b.dataset.value === type ? "true" : "false");
+    });
+    line.el.querySelector(".type-hint").textContent = TYPE_HINTS[type];
+    line.typeField.classList.remove("invalid");
+    // Scrap Entire Door always costs the whole door, never a specific part --
+    // force DOOR, and drop every other line. Switching back away clears the
+    // forced DOOR so the operator has to pick the real part.
+    if (type === "Scrap Entire Door") {
+      lines.slice().forEach(function (l) { if (l !== line) removeLine(l); });
+      line.input.value = "DOOR";
+      line.code = "DOOR";
+    } else if (line.input.value === "DOOR") {
+      line.input.value = "";
+      line.code = "";
+    }
+    syncAddButton();
+    syncComponentField(line);
+    line.recalc();
     renderSummary();
   }
 
@@ -326,10 +356,9 @@
   // Which-piece choice only applies to Replace Part; the hint says how many of
   // that piece this door has (Admin -> Door Codes) once the order is known.
   function syncComponentField(line) {
-    // Shown until a type is picked too (Type is further down the page, so most
-    // operators enter the material first) -- only Rework / Recoat and Scrap
-    // Entire Door have no use for it.
-    var show = !state.type || state.type === "Replace Part";
+    // Shown until a type is picked -- only Rework / Recoat and Scrap Entire
+    // Door have no use for it.
+    var show = !line.type || line.type === "Replace Part";
     line.el.querySelector(".component-field").style.display = show ? "" : "none";
     if (!show) { line.comp.value = ""; line.component = ""; }
     var dp = state.soOrder && state.soOrder.door_pieces ? state.soOrder.door_pieces : null;
@@ -457,12 +486,12 @@
     if (!line.code) { line.preview = null; renderLine(line); renderSummary(); return; }
     var gen = formGeneration;
     var body = {
-      type: state.type, quantity: line.quantity, product_code: line.code,
+      type: line.type, quantity: line.quantity, product_code: line.code,
       component: line.component || null, so_number: soInput.value.trim()
     };
     // Preview only -- the server never trusts this value on save, it re-derives
     // the real figure itself live from so_number (see services/rework.py).
-    if (state.type === "Scrap Entire Door" && state.soOrder && state.soOrder.full_door_material_cost != null) {
+    if (isScrap(line) && state.soOrder && state.soOrder.full_door_material_cost != null) {
       body.full_door_material_cost = state.soOrder.full_door_material_cost;
     }
     fetch("/api/cost-preview", {
@@ -471,7 +500,7 @@
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (gen !== formGeneration || lines.indexOf(line) === -1) return;
       line.preview = data;
-      if (!line.compTouched && !line.component && (!state.type || state.type === "Replace Part")) {
+      if (!line.compTouched && !line.component && (!line.type || line.type === "Replace Part")) {
         var guess = guessComponent(data.description);
         if (guess) {
           line.component = guess; line.comp.value = guess;
@@ -488,7 +517,7 @@
   function renderLine(line) {
     var data = line.preview, box = line.box;
     var basis = data && data.piece_basis;
-    var scrapWithJobCost = data && state.type === "Scrap Entire Door" && state.soOrder && data.material_cost != null;
+    var scrapWithJobCost = data && isScrap(line) && state.soOrder && data.material_cost != null;
     if (basis && basis.error) {
       box.hidden = false;
       box.innerHTML = "<span></span><span></span>";
@@ -516,11 +545,12 @@
   }
 
   function renderSummary() {
+    var firstRecoat = lines.findIndex(function (l) { return l.type === "Rework / Recoat"; });
     var costs = lines.map(function (l, i) {
       var p = l.preview;
       if (!p || p.material_cost == null) return null;
       // The flat Rework / Recoat charge is once per entry, not per material.
-      return state.type === "Rework / Recoat" && i > 0 ? 0 : p.material_cost;
+      return l.type === "Rework / Recoat" && i !== firstRecoat ? 0 : p.material_cost;
     });
     var hasAny = costs.some(function (c) { return c != null; });
     var total = costs.reduce(function (sum, c) { return sum + (c || 0); }, 0);
@@ -537,13 +567,15 @@
   function setFieldValid(id, ok) { document.getElementById(id).classList.toggle("invalid", !ok); }
   function validate() {
     var ok = true;
-    if (!state.type) { setFieldValid("typeField", false); ok = false; }
-    if (!personInput.value.trim()) { setFieldValid("personField", false); ok = false; }
-    if (!state.reason) { setFieldValid("reasonField", false); ok = false; }
     if (!doorTypeSel.value) { setFieldValid("doorTypeField", false); ok = false; }
     if (!workCentreSel.value) { setFieldValid("workCentreField", false); ok = false; }
     if (!document.getElementById("soNumber").value.trim()) { setFieldValid("soField", false); ok = false; }
-    lines.forEach(function (l) { if (!l.code.trim()) { l.field.classList.add("invalid"); ok = false; } });
+    lines.forEach(function (l) {
+      if (!l.type) { l.typeField.classList.add("invalid"); ok = false; }
+      if (!l.personInput.value.trim()) { l.personField.classList.add("invalid"); ok = false; }
+      if (!l.reason) { l.reasonField.classList.add("invalid"); ok = false; }
+      if (!l.code.trim()) { l.field.classList.add("invalid"); ok = false; }
+    });
     if (!colourInput.value.trim()) { setFieldValid("colourField", false); ok = false; }
     if (!document.getElementById("heightInput").value.trim()) { setFieldValid("heightField", false); ok = false; }
     if (!document.getElementById("widthInput").value.trim()) { setFieldValid("widthField", false); ok = false; }
@@ -567,16 +599,16 @@
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         rework_date: today,
-        type: state.type,
-        person: personInput.value.trim(),
         so_number: document.getElementById("soNumber").value.trim(),
         materials: lines.map(function (l) {
-          return { product_code: l.code.trim(), quantity: l.quantity, component: l.component || null };
+          return {
+            product_code: l.code.trim(), quantity: l.quantity, component: l.component || null,
+            type: l.type, person: l.personInput.value.trim(), reason: l.reason
+          };
         }),
         height_mm: document.getElementById("heightInput").value || null,
         width_mm: document.getElementById("widthInput").value || null,
         cut_length_mm: document.getElementById("cutLengthInput").value || null,
-        reason: state.reason,
         colour: colourInput.value.trim(),
         door_type: doorTypeSel.value,
         work_centre: workCentreSel.value,
@@ -590,8 +622,12 @@
           showToast("Couldn't save — " + (errs[0] || "check the highlighted fields."), true);
           return;
         }
-        var saved = res.data.event && res.data.event.entered_by_name;
-        if (saved && !personKnown(saved)) { PEOPLE.push(saved); PEOPLE.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; }); personCombo.refresh(PEOPLE); }
+        (res.data.events || []).forEach(function (ev) {
+          var saved = ev.entered_by_name;
+          if (saved && !personKnown(saved)) PEOPLE.push(saved);
+        });
+        PEOPLE.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+        lines.forEach(function (l) { l.personCombo.refresh(PEOPLE); });
         showToast(res.data.events && res.data.events.length > 1 ? res.data.events.length + " materials logged." : "Entry logged.");
         resetForm();
       })
@@ -605,20 +641,16 @@
 
   function resetForm() {
     formGeneration++;
-    state = { type: null, reason: null, soOrder: null, jobMaterials: null };
+    state = { soOrder: null, jobMaterials: null };
     form.reset();
     while (lines.length) { lines.pop().el.remove(); }
     addLine();
     document.getElementById("addMaterialBtn").style.display = "";
-    Array.prototype.forEach.call(typeSeg.children, function (b) { b.setAttribute("aria-pressed", "false"); });
-    document.getElementById("typeHint").textContent = "Choose what happened to the door.";
-    document.getElementById("sourceChip").hidden = true;
-    personHint.hidden = true;
     document.getElementById("soStatus").textContent = "";
     document.getElementById("jobNumber").value = "";
     document.getElementById("colourErpHint").hidden = true;
     document.getElementById("productScopeHint").hidden = true;
-    ["typeField", "personField", "reasonField", "doorTypeField", "workCentreField", "soField", "colourField", "heightField", "widthField"]
+    ["doorTypeField", "workCentreField", "soField", "colourField", "heightField", "widthField"]
       .forEach(function (id) { setFieldValid(id, true); });
     renderSummary();
     // form.reset() doesn't fire "input" events, so the TEST ORDER banner
