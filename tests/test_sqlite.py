@@ -118,7 +118,7 @@ def test_turret_edit_and_writeoff_week_arrays(sqlite_store, monkeypatch):
 def test_turret_multiple_reworks_options_and_usage(sqlite_store, monkeypatch):
     monkeypatch.setattr(turret, "_today", lambda: date(2026, 11, 4))  # a Wednesday
     assert turret.list_options("turret_open_options") == ["LH IN", "RH IN", "LH OUT", "RH OUT"]
-    admin_data.create_named("turret_variations", "More sheets used")
+    assert turret.list_options("turret_variations")[:3] == ["More than one door", "More sheets used", "Less sheets used"]
     event_id = turret.create_event(_turret_job(
         sales_number="S000123", open_status="LH IN", variation="More sheets used",
         reworks=[_rework(qty=2), _rework(qty=3, rework_type="Rework Entire Door"), {"reason": "", "materials": []}],
@@ -142,7 +142,7 @@ def test_turret_multiple_reworks_options_and_usage(sqlite_store, monkeypatch):
         turret.update_event(event_id, _turret_job(reworks=[_rework(rework_type="Bogus")]))
 
     # Renaming a variation cascades into turret_events.
-    assert admin_data.save_named("turret_variations", "More sheets used", "EX(+) More sheets", 1) == 1
+    assert admin_data.save_named("turret_variations", "More sheets used", "EX(+) More sheets", 2) == 1
     assert turret.get_event(event_id)["variation"] == "EX(+) More sheets"
 
     usage = turret.daily_usage(date(2026, 11, 4), date(2026, 11, 4))
@@ -253,7 +253,7 @@ def test_http_login_pin_change_and_all_pages(sqlite_store, monkeypatch):
     turret_id = created.get_json()["id"]
     assert client.get(f"/turret/{turret_id}/edit").status_code == 200
     assert client.post(f"/api/turret-events/{turret_id}", json=turret_job).status_code == 200
-    assert client.post("/api/admin/turret_variations", json={"name": "Sheet swapped"}).status_code == 200
+    assert client.post("/api/admin/turret_variations", json={"name": "Test variation"}).status_code == 200
     assert client.post("/logout").status_code == 302
     assert client.get("/api/users").status_code == 401
 
