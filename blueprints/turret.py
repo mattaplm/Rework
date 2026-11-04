@@ -21,6 +21,7 @@ def list_page():
         "month": request.args.get("month") or None,
         "door_type": request.args.get("door_type") or None,
         "job_number": request.args.get("job_number") or None,
+        "sales_number": request.args.get("sales_number") or None,
     }
     events = turret_service.list_events(limit=200, filters=filters)
 
@@ -62,10 +63,54 @@ def list_page():
     )
 
 
+@bp.route("/turret/usage")
+def usage_page():
+    """Daily Usage: tally of sheet material used (and scrapped) per item over
+    a chosen period."""
+    period, start, end = turret_service.usage_period(
+        request.args.get("period"), request.args.get("start"), request.args.get("end"),
+    )
+    user = current_user()
+    rows = turret_service.daily_usage(start, end, include_test=bool(user and user["role"] == "admin"))
+    return render_template(
+        "turret_usage.html",
+        active="turret_usage",
+        rows=rows,
+        period=period,
+        periods=turret_service.USAGE_PERIODS,
+        start=start,
+        end=end,
+        totals={k: sum(r[k] for r in rows) for k in ("used", "scrapped", "total")},
+    )
+
+
+def _reworks_for_form(event: dict | None) -> list[dict]:
+    """The entry form's JS state for each existing rework -- dates
+    pre-formatted, quantities as plain numbers."""
+    out = []
+    for r in (event or {}).get("reworks") or []:
+        materials = []
+        for slot in turret_service.SHEET_SLOTS:
+            qty = r.get(f"scrap_qty_{slot}")
+            recorded = r.get(f"scrap_date_{slot}")
+            materials.append({
+                "sheet": r.get(f"scrap_sheet_{slot}") or "",
+                "qty": float(qty) if qty is not None else None,
+                "recorded": recorded.strftime("%d %b %Y") if recorded else None,
+            })
+        out.append({"id": r["id"], "rework_type": r.get("rework_type"), "reason": r.get("reason") or "",
+                    "materials": materials})
+    return out
+
+
 def _form_context(event: dict | None) -> dict:
     return dict(
+        reworks=_reworks_for_form(event),
         active="turret_new",
         event=event,
+        entry_date=event["event_date"] if event else turret_service._today(),
+        open_options=turret_service.list_options("turret_open_options"),
+        variations=turret_service.list_options("turret_variations"),
         door_types=turret_service.list_door_types(),
         colours=reference_data.list_colours(),
         sheet_items=reference_data.list_sheet_items(),
@@ -119,6 +164,9 @@ def api_update(event_id: int):
     user = current_user()
     audit.log(
         user["username"] if user else "unknown", "turret_event.update", "turret_event", event_id,
-        {"rework_type": payload.get("rework_type"), "reason": payload.get("reason")},
+        {"reworks": [
+            {"rework_type": r.get("rework_type"), "reason": r.get("reason")}
+            for r in (payload.get("reworks") or []) if isinstance(r, dict)
+        ]},
     )
     return jsonify({"ok": True})

@@ -410,3 +410,14 @@ table.admin-table td.colour-swatch-cell{width:20px;}
 }
 .update-badge:hover{background:color-mix(in srgb, var(--good) 85%, black);}
 :root[data-theme="dark"] .update-badge{color:#052e16;}
+
+/* Turret daily usage: custom date range inputs toggle via [hidden], which an
+   author display rule (.field / .btn-primary) would otherwise override. */
+.custom-range[hidden]{display:none !important;}
+
+/* Turret entry form: one block per rework (any number per job). */
+.rework-block{padding:14px 0; border-top:1px dashed var(--border, #e2e8f0);}
+.rework-block:first-of-type{border-top:0; padding-top:4px;}
+.rework-block-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:8px;}
+.rework-block-head h3{font-size:.88rem; margin:0;}
+.readonly-val{min-height:42px; display:flex; align-items:center; padding:0 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface-2, transparent); color:var(--text-muted); font-size:.9rem;}

@@ -42,6 +42,9 @@
       <a href="{{ url_for('turret.list_page') }}" class="nav-link {% if active == 'turret' %}active{% endif %}">
         <span class="nav-icon">🪚</span> Turret log
       </a>
+      <a href="{{ url_for('turret.usage_page') }}" class="nav-link {% if active == 'turret_usage' %}active{% endif %}">
+        <span class="nav-icon">📊</span> Daily usage
+      </a>
       {% if current_user and current_user.role in ('operator', 'admin') %}
       <a href="{{ url_for('turret.new_page') }}" class="nav-link {% if active == 'turret_new' %}active{% endif %}">
         <span class="nav-icon">➕</span> New turret entry

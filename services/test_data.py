@@ -92,6 +92,10 @@ def disable() -> dict:
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM rework_events WHERE so_number = %s RETURNING id", (SO_NUMBER,))
         rework_deleted = len(cur.fetchall())
+        cur.execute(
+            "DELETE FROM turret_reworks WHERE turret_event_id IN (SELECT id FROM turret_events WHERE sales_number = %s)",
+            (SO_NUMBER,),
+        )
         cur.execute("DELETE FROM turret_events WHERE sales_number = %s RETURNING id", (SO_NUMBER,))
         turret_deleted = len(cur.fetchall())
         cur.execute("DELETE FROM synced_order_materials WHERE job_number = %s", (JOB_NUMBER,))

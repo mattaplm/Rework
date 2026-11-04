@@ -1,13 +1,18 @@
-"""Turret log: reads for the list/write-off pages, plus the entry form's
-create/reopen-to-edit flow (2026-10-21).
+"""Turret log: reads for the list/write-off/daily-usage pages, plus the entry
+form's create/reopen-to-edit flow (2026-10-21).
 
 Historically-imported rows (services/turret_import.py) are scrap-only --
 the importer only ever inserts a row that already had scrap recorded (see
-that module's docstring). New web-form rows don't have that constraint:
-`create_event` saves a job's material usage with no rework/scrap at all
-(most turret jobs never need any), and `update_event` reopens that same row
-later to add it, same two-stage workflow as the real paper/spreadsheet
-process this replaces.
+that module's docstring), and that scrap lives on turret_events' own
+scrap_* columns. New web-form rows don't have that constraint:
+`create_event` saves a job's material usage, usually with no rework at all,
+and `update_event` reopens that same row later to add it, same two-stage
+workflow as the real paper/spreadsheet process this replaces.
+
+A job can have any number of reworks (2026-11-04), each with its own type,
+reason and up to 3 scrapped materials -- stored one row per rework in
+`turret_reworks` (migration 0017). turret_events.scrap_cost stays the job's
+total across all its reworks.
 """
 
 from __future__ import annotations
@@ -21,7 +26,15 @@ from services.costing import compute_sheet_scrap_cost
 SHEET_SLOTS = ("a", "b", "c")
 REWORK_TYPES = ("Replacement Parts", "Rework Entire Door")
 
-REQUIRED_FIELDS = ("event_date", "sales_number", "door_type", "colour", "sheet_a")
+REQUIRED_FIELDS = ("sales_number", "door_type", "colour", "sheet_a")
+
+# Daily Usage tab periods, in dropdown order.
+USAGE_PERIODS = (
+    ("today", "Today"), ("yesterday", "Yesterday"),
+    ("this_week", "This week"), ("last_week", "Last week"),
+    ("this_month", "This month"), ("last_month", "Last month"),
+    ("custom", "Custom range"),
+)
 
 
 class ValidationError(Exception):
@@ -30,15 +43,46 @@ class ValidationError(Exception):
         super().__init__(", ".join(f"{k}: {v}" for k, v in errors.items()))
 
 
-def _validate(payload: dict) -> None:
+def _today() -> datetime.date:
+    """NZ wall-clock date (the host runs UTC) -- the entry date is stamped
+    server-side, never taken from the client."""
+    return db.nz_now().date()
+
+
+def _clean_reworks(payload: dict) -> list[dict]:
+    """Normalises payload["reworks"] -- a list of {id, rework_type, reason,
+    materials: [{sheet, qty}, ...up to 3]} -- dropping any rework the operator
+    left completely blank."""
+    cleaned, errors = [], {}
+    for index, raw in enumerate(payload.get("reworks") or []):
+        if not isinstance(raw, dict):
+            continue
+        rework_type = str(raw.get("rework_type") or "").strip() or None
+        reason = str(raw.get("reason") or "").strip() or None
+        materials = []
+        for m in (raw.get("materials") or [])[: len(SHEET_SLOTS)]:
+            m = m if isinstance(m, dict) else {}
+            sheet = str(m.get("sheet") or "").strip() or None
+            qty = m.get("qty")
+            materials.append({"sheet": sheet, "qty": None if qty in (None, "") else qty})
+        if not (rework_type or reason or any(m["sheet"] or m["qty"] is not None for m in materials)):
+            continue
+        if rework_type and rework_type not in REWORK_TYPES:
+            errors[f"reworks.{index}.rework_type"] = f"Must be one of {', '.join(REWORK_TYPES)}."
+        cleaned.append({"id": raw.get("id"), "rework_type": rework_type, "reason": reason, "materials": materials})
+    if errors:
+        raise ValidationError(errors)
+    return cleaned
+
+
+def _validate(payload: dict) -> list[dict]:
     errors: dict[str, str] = {}
     for field in REQUIRED_FIELDS:
         if not str(payload.get(field) or "").strip():
             errors[field] = "Required."
-    if payload.get("rework_type") and payload["rework_type"] not in REWORK_TYPES:
-        errors["rework_type"] = f"Must be one of {', '.join(REWORK_TYPES)}."
     if errors:
         raise ValidationError(errors)
+    return _clean_reworks(payload)
 
 
 def list_events(limit: int = 200, offset: int = 0, filters: dict | None = None) -> list[dict]:
@@ -46,17 +90,20 @@ def list_events(limit: int = 200, offset: int = 0, filters: dict | None = None) 
     clauses, params = [], {}
 
     if filters.get("year"):
-        clauses.append(f"{db.date_part('year', 'event_date')} = %(year)s")
+        clauses.append(f"{db.date_part('year', 'e.event_date')} = %(year)s")
         params["year"] = int(filters["year"])
     if filters.get("month"):
-        clauses.append(f"{db.date_part('month', 'event_date')} = %(month)s")
+        clauses.append(f"{db.date_part('month', 'e.event_date')} = %(month)s")
         params["month"] = int(filters["month"])
     if filters.get("door_type"):
-        clauses.append("door_type = %(door_type)s")
+        clauses.append("e.door_type = %(door_type)s")
         params["door_type"] = filters["door_type"]
     if filters.get("job_number"):
-        clauses.append("LOWER(job_number) LIKE LOWER(%(job_number)s)")
-        params["job_number"] = f"%{filters['job_number']}%"
+        clauses.append("LOWER(e.job_number) LIKE LOWER(%(job_number)s)")
+        params["job_number"] = f"%{filters['job_number'].strip()}%"
+    if filters.get("sales_number"):
+        clauses.append("LOWER(e.sales_number) LIKE LOWER(%(sales_number)s)")
+        params["sales_number"] = f"%{filters['sales_number'].strip()}%"
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params["limit"] = limit
@@ -64,8 +111,18 @@ def list_events(limit: int = 200, offset: int = 0, filters: dict | None = None) 
 
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            f"SELECT * FROM turret_events {where} "
-            f"ORDER BY event_date DESC, id DESC LIMIT %(limit)s OFFSET %(offset)s",
+            f"""
+            SELECT e.*, r.rework_qty, r.rework_count
+            FROM turret_events e
+            LEFT JOIN (
+                SELECT turret_event_id,
+                       SUM(COALESCE(scrap_qty_a, 0) + COALESCE(scrap_qty_b, 0) + COALESCE(scrap_qty_c, 0)) AS rework_qty,
+                       COUNT(*) AS rework_count
+                FROM turret_reworks GROUP BY turret_event_id
+            ) r ON r.turret_event_id = e.id
+            {where}
+            ORDER BY e.event_date DESC, e.id DESC LIMIT %(limit)s OFFSET %(offset)s
+            """,
             params,
         )
         return cur.fetchall()
@@ -83,13 +140,33 @@ def list_door_types() -> list[str]:
         return [r["door_type"] for r in cur.fetchall()]
 
 
-_UNPIVOT_SCRAP = """
-    SELECT week_num, scrap_sheet_a AS item, scrap_qty_a AS qty, scrap_date_a AS scrap_date, sales_number FROM turret_events WHERE scrap_qty_a IS NOT NULL AND scrap_date_a IS NOT NULL
-    UNION ALL
-    SELECT week_num, scrap_sheet_b AS item, scrap_qty_b AS qty, scrap_date_b AS scrap_date, sales_number FROM turret_events WHERE scrap_qty_b IS NOT NULL AND scrap_date_b IS NOT NULL
-    UNION ALL
-    SELECT week_num, scrap_sheet_c AS item, scrap_qty_c AS qty, scrap_date_c AS scrap_date, sales_number FROM turret_events WHERE scrap_qty_c IS NOT NULL AND scrap_date_c IS NOT NULL
-"""
+def list_options(table: str) -> list[str]:
+    """Active Open / Variation picklist values (Admin -> Turret Open /
+    Turret Variations)."""
+    if table not in ("turret_open_options", "turret_variations"):
+        raise ValueError(table)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT name FROM {table} WHERE active ORDER BY sort_order, name")
+        return [r["name"] for r in cur.fetchall()]
+
+
+# Every scrap recording, one row per (row or rework, slot): historical imported
+# rows keep theirs on turret_events itself; web-form reworks (any number per
+# job) live in turret_reworks.
+_UNPIVOT_SCRAP = " UNION ALL ".join(
+    [
+        f"SELECT week_num, scrap_sheet_{s} AS item, scrap_qty_{s} AS qty, scrap_date_{s} AS scrap_date, sales_number "
+        f"FROM turret_events WHERE scrap_qty_{s} IS NOT NULL AND scrap_date_{s} IS NOT NULL"
+        for s in SHEET_SLOTS
+    ]
+    + [
+        f"SELECT e.week_num, r.scrap_sheet_{s} AS item, r.scrap_qty_{s} AS qty, r.scrap_date_{s} AS scrap_date, e.sales_number "
+        f"FROM turret_reworks r JOIN turret_events e ON e.id = r.turret_event_id "
+        f"WHERE r.scrap_qty_{s} IS NOT NULL AND r.scrap_date_{s} IS NOT NULL"
+        for s in SHEET_SLOTS
+    ]
+)
+
 
 def _writeoff_date_expr() -> str:
     return db.date_shift(db.week_start("scrap_date"), 7)
@@ -97,10 +174,9 @@ def _writeoff_date_expr() -> str:
 
 def scrap_summary_by_week(write_off_week: int | None = None, write_off_year: int | None = None) -> list[dict]:
     """Scrap logged in turret_events, grouped by the week it's due for
-    write-off in ERP and item. A row can carry scrap against up to 3 sheet
-    slots (A/B/C), each with its own `scrap_date`; this un-pivots all three
-    into one (item, qty, scrap_date) series before summing, so a job
-    scrapping two different sheets doesn't get silently dropped to one line.
+    write-off in ERP and item. Un-pivots every scrap slot (historical row
+    slots and every web-form rework's slots) into one (item, qty, scrap_date)
+    series before summing, so nothing gets silently dropped to one line.
 
     The write-off week is *derived* from each slot's own `scrap_date` (one
     ISO week later, always a Monday) -- **not** the sheet's own pre-typed
@@ -108,10 +184,7 @@ def scrap_summary_by_week(write_off_week: int | None = None, write_off_year: int
     purpose. Confirmed live 2026-10-21: trusting `scrap_week` directly gave
     an 9.8% exact-match rate against real ERP data; deriving from
     `scrap_date` the same way services.rework does from `entered_date` gave
-    93.5%. Same lesson as Doors: a human-typed "intended" week drifts from
-    what actually happened in SyteLine; the underlying date it was actually
-    recorded on is the more reliable signal. `scrap_week`/`scrap_year`
-    aren't read here anymore as a result.
+    93.5%.
 
     `from_weeks` is the distinct *production* week(s) (`week_num` -- when
     the job itself ran, not when the scrap was recorded) the grouped scrap
@@ -181,130 +254,229 @@ def list_available_scrap_weeks() -> list[dict]:
 
 # ── Entry form: create + reopen-to-edit ─────────────────────────────────────
 
+_SCRAP_COLUMNS = [f"scrap_{k}_{s}" for s in SHEET_SLOTS for k in ("sheet", "qty", "date")]
+
+
+def _legacy_rework(event: dict) -> dict | None:
+    """A historical imported row keeps its scrap on turret_events itself --
+    surfaced to the form as one rework with id "legacy", so editing it keeps
+    its original scrap dates (it moves into turret_reworks on that save)."""
+    has_scrap = any(event.get(f"scrap_sheet_{s}") or event.get(f"scrap_qty_{s}") is not None for s in SHEET_SLOTS)
+    if not (has_scrap or event.get("rework_type") or event.get("reason")):
+        return None
+    return {"id": "legacy", "rework_type": event.get("rework_type"), "reason": event.get("reason"),
+            "scrap_cost": event.get("scrap_cost"), **{c: event.get(c) for c in _SCRAP_COLUMNS}}
+
+
 def get_event(event_id: int) -> dict | None:
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM turret_events WHERE id = %s", (event_id,))
-        return cur.fetchone()
+        event = cur.fetchone()
+        if event is None:
+            return None
+        cur.execute("SELECT * FROM turret_reworks WHERE turret_event_id = %s ORDER BY position, id", (event_id,))
+        reworks = cur.fetchall()
+    legacy = _legacy_rework(event)
+    event["reworks"] = ([legacy] if legacy else []) + list(reworks)
+    return event
 
 
-def create_event(payload: dict, user_id: int | None) -> int:
-    """Saves a job's material usage -- stage one of the two-stage workflow
-    (see module docstring). No rework/scrap here; that's added later via
-    update_event, reopening this same row.
+def _rework_rows(reworks: list[dict], existing: dict | None) -> tuple[list[dict], float | None]:
+    """Turns cleaned reworks into turret_reworks column values.
 
-    `week_num` -- the job's own production week, shown as "Production week(s)" on
-    the Scrap write-off tab -- is stamped here from `event_date`'s own ISO
-    week (same ISO week definition used everywhere else in
-    this app). Historical imported rows carry the old spreadsheet's own
-    hand-typed week column instead; this is the web-form equivalent, set
-    once at creation and never touched again by update_event, same "stamped
-    once" convention as scrap_date."""
-    _validate(payload)
-    event_date = datetime.date.fromisoformat(str(payload["event_date"]))
-    with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO turret_events (
-                event_date, week_num, door_type, sales_number, job_number, colour,
-                sheet_a, qty_a_ordered, sheet_b, qty_b_ordered, sheet_c, qty_c_ordered,
-                comments, entered_by_user_id
-            ) VALUES (
-                %(event_date)s, %(week_num)s, %(door_type)s, %(sales_number)s, %(job_number)s, %(colour)s,
-                %(sheet_a)s, %(qty_a)s, %(sheet_b)s, %(qty_b)s, %(sheet_c)s, %(qty_c)s,
-                %(notes)s, %(user_id)s
-            )
-            RETURNING id
-            """,
-            {
-                "event_date": event_date,
-                "week_num": event_date.isocalendar()[1],
-                "door_type": payload.get("door_type") or None,
-                "sales_number": payload.get("sales_number") or None,
-                "job_number": payload.get("job_number") or None,
-                "colour": payload.get("colour") or None,
-                "sheet_a": payload.get("sheet_a") or None,
-                "qty_a": payload.get("qty_a") or None,
-                "sheet_b": payload.get("sheet_b") or None,
-                "qty_b": payload.get("qty_b") or None,
-                "sheet_c": payload.get("sheet_c") or None,
-                "qty_c": payload.get("qty_c") or None,
-                "notes": payload.get("notes") or None,
-                "user_id": user_id,
-            },
-        )
-        return cur.fetchone()["id"]
+    A material slot's `scrap_date` is stamped to today the first time it gets
+    scrap data and preserved on every later save (matched by rework id +
+    slot) -- the date it was actually recorded is what the Scrap write-off
+    tab's ERP reconciliation keys on (same lesson as Doors' entered_date, see
+    CLAUDE.md). Each rework's scrap_cost is qty x std_cost per slot, always
+    recomputed server-side; returns the rows plus the job's total."""
+    today = _today()
+    previous = {str(r["id"]): r for r in (existing or {}).get("reworks") or []}
+    rows, total = [], None
+    for position, rw in enumerate(reworks):
+        before = previous.get(str(rw["id"])) if rw.get("id") is not None else None
+        keep_id = before["id"] if before and before["id"] != "legacy" else None
+        row = {"id": keep_id, "position": position, "rework_type": rw["rework_type"], "reason": rw["reason"]}
+        cost = None
+        for i, slot in enumerate(SHEET_SLOTS):
+            m = rw["materials"][i] if i < len(rw["materials"]) else {"sheet": None, "qty": None}
+            row[f"scrap_sheet_{slot}"] = m["sheet"]
+            row[f"scrap_qty_{slot}"] = m["qty"]
+            if not (m["sheet"] or m["qty"] is not None):
+                row[f"scrap_date_{slot}"] = None
+            elif before and before.get(f"scrap_date_{slot}"):
+                row[f"scrap_date_{slot}"] = before[f"scrap_date_{slot}"]
+            else:
+                row[f"scrap_date_{slot}"] = today
+            slot_cost = compute_sheet_scrap_cost(m["qty"], reference_data.get_item(m["sheet"]) if m["sheet"] else None)
+            if slot_cost is not None:
+                cost = (cost or 0) + slot_cost
+        row["scrap_cost"] = round(cost, 2) if cost is not None else None
+        if cost is not None:
+            total = (total or 0) + cost
+        rows.append(row)
+    return rows, (round(total, 2) if total is not None else None)
 
 
-def update_event(event_id: int, payload: dict) -> None:
-    """Reopens an existing entry -- lets the operator correct the original
-    job-materials fields and/or add rework/scrap. A rework material slot's
-    `scrap_date` is stamped to *today* the first time that slot gets scrap
-    data, server-side, and preserved on every later edit after that -- not
-    something the operator sets directly, and not re-stamped just because
-    the row gets saved again. The date something was actually recorded is
-    what the Scrap write-off tab's ERP reconciliation depends on (same
-    lesson as Doors' entered_date -- see CLAUDE.md, "Scrap write-off
-    (Doors)").
+_REWORK_COLUMNS = ["position", "rework_type", "reason"] + _SCRAP_COLUMNS + ["scrap_cost"]
 
-    `scrap_cost` (the same single column historical imported rows already
-    carry from the old spreadsheet) is recomputed here on every save for
-    web-form rows -- qty x std_cost per scrap slot
-    (services.costing.compute_sheet_scrap_cost), summed across however many
-    of the 3 slots have scrap recorded. Always recomputed server-side from
-    current item costs, never trusted from the client, same rule as every
-    other cost figure in this app (see services/costing.py)."""
-    _validate(payload)
-    existing = get_event(event_id)
-    if existing is None:
-        raise ValueError(f"turret_events {event_id} not found")
-    today = datetime.date.today()
 
+def _write_reworks(cur, event_id: int, rows: list[dict]) -> None:
+    """Upserts this job's reworks: updates ones that still exist (keeping
+    their ids), inserts new ones, deletes any the operator removed."""
+    keep_ids = {r["id"] for r in rows if r["id"] is not None}
+    cur.execute("SELECT id FROM turret_reworks WHERE turret_event_id = %s", (event_id,))
+    for r in cur.fetchall():
+        if r["id"] not in keep_ids:
+            cur.execute("DELETE FROM turret_reworks WHERE id = %s", (r["id"],))
+    for row in rows:
+        values = {c: row[c] for c in _REWORK_COLUMNS}
+        if row["id"] is not None:
+            sets = ", ".join(f"{c} = %({c})s" for c in _REWORK_COLUMNS)
+            cur.execute(f"UPDATE turret_reworks SET {sets} WHERE id = %(id)s AND turret_event_id = %(event_id)s",
+                        {**values, "id": row["id"], "event_id": event_id})
+        else:
+            cols = ", ".join(_REWORK_COLUMNS)
+            vals = ", ".join(f"%({c})s" for c in _REWORK_COLUMNS)
+            cur.execute(f"INSERT INTO turret_reworks (turret_event_id, {cols}) VALUES (%(event_id)s, {vals})",
+                        {**values, "event_id": event_id})
+
+
+def _job_fields(payload: dict) -> dict:
     fields = {
-        "event_date": payload["event_date"],
         "door_type": payload.get("door_type") or None,
         "sales_number": payload.get("sales_number") or None,
         "job_number": payload.get("job_number") or None,
         "colour": payload.get("colour") or None,
+        "open_status": payload.get("open_status") or None,
+        "variation": payload.get("variation") or None,
         "comments": payload.get("notes") or None,
-        "rework_type": payload.get("rework_type") or None,
-        "reason": payload.get("reason") or None,
     }
-    scrap_cost_total = None
     for slot in SHEET_SLOTS:
         fields[f"sheet_{slot}"] = payload.get(f"sheet_{slot}") or None
         fields[f"qty_{slot}_ordered"] = payload.get(f"qty_{slot}") or None
+    return fields
 
-        scrap_sheet = payload.get(f"scrap_sheet_{slot}") or None
-        scrap_qty = payload.get(f"scrap_qty_{slot}") or None
-        fields[f"scrap_sheet_{slot}"] = scrap_sheet
-        fields[f"scrap_qty_{slot}"] = scrap_qty
-        if not (scrap_sheet or scrap_qty):
-            fields[f"scrap_date_{slot}"] = None
-        elif existing.get(f"scrap_date_{slot}"):
-            fields[f"scrap_date_{slot}"] = existing[f"scrap_date_{slot}"]
-        else:
-            fields[f"scrap_date_{slot}"] = today
 
-        slot_cost = compute_sheet_scrap_cost(scrap_qty, reference_data.get_item(scrap_sheet) if scrap_sheet else None)
-        if slot_cost is not None:
-            scrap_cost_total = (scrap_cost_total or 0) + slot_cost
-    fields["scrap_cost"] = round(scrap_cost_total, 2) if scrap_cost_total is not None else None
+def create_event(payload: dict, user_id: int | None) -> int:
+    """Saves a job's material usage (plus any reworks already known).
 
+    `event_date` is the date of entry, stamped server-side to today (NZ) --
+    not something the operator picks or the client sends. `week_num` (the
+    job's production week, shown as "Production week(s)" on the Scrap
+    write-off tab) is that date's ISO week, set once here and never touched
+    by update_event."""
+    reworks = _validate(payload)
+    event_date = _today()
+    rows, total_cost = _rework_rows(reworks, None)
+    fields = _job_fields(payload)
+    cols = list(fields)
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            """
-            UPDATE turret_events SET
-                event_date = %(event_date)s, door_type = %(door_type)s,
-                sales_number = %(sales_number)s, job_number = %(job_number)s, colour = %(colour)s,
-                sheet_a = %(sheet_a)s, qty_a_ordered = %(qty_a_ordered)s,
-                sheet_b = %(sheet_b)s, qty_b_ordered = %(qty_b_ordered)s,
-                sheet_c = %(sheet_c)s, qty_c_ordered = %(qty_c_ordered)s,
-                scrap_sheet_a = %(scrap_sheet_a)s, scrap_qty_a = %(scrap_qty_a)s, scrap_date_a = %(scrap_date_a)s,
-                scrap_sheet_b = %(scrap_sheet_b)s, scrap_qty_b = %(scrap_qty_b)s, scrap_date_b = %(scrap_date_b)s,
-                scrap_sheet_c = %(scrap_sheet_c)s, scrap_qty_c = %(scrap_qty_c)s, scrap_date_c = %(scrap_date_c)s,
-                rework_type = %(rework_type)s, reason = %(reason)s, scrap_cost = %(scrap_cost)s,
-                comments = %(comments)s, updated_at = now()
-            WHERE id = %(event_id)s
-            """,
-            {**fields, "event_id": event_id},
+            f"INSERT INTO turret_events (event_date, week_num, entered_by_user_id, scrap_cost, {', '.join(cols)}) "
+            f"VALUES (%(event_date)s, %(week_num)s, %(user_id)s, %(scrap_cost)s, "
+            f"{', '.join(f'%({c})s' for c in cols)}) RETURNING id",
+            {**fields, "event_date": event_date, "week_num": event_date.isocalendar()[1],
+             "user_id": user_id, "scrap_cost": total_cost},
         )
+        event_id = cur.fetchone()["id"]
+        _write_reworks(cur, event_id, rows)
+        return event_id
+
+
+def update_event(event_id: int, payload: dict) -> None:
+    """Reopens an existing entry -- correct the job fields and add, change or
+    remove reworks. The entry date never changes. A historical row's own
+    scrap columns (the "legacy" rework) move into turret_reworks on its first
+    save here, keeping their original scrap dates. turret_events.scrap_cost
+    becomes the sum of the row's reworks, recomputed on every save."""
+    reworks = _validate(payload)
+    existing = get_event(event_id)
+    if existing is None:
+        raise ValueError(f"turret_events {event_id} not found")
+    rows, total_cost = _rework_rows(reworks, existing)
+    fields = {**_job_fields(payload), "rework_type": None, "reason": None,
+              **{c: None for c in _SCRAP_COLUMNS}, "scrap_cost": total_cost}
+    sets = ", ".join(f"{c} = %({c})s" for c in fields)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"UPDATE turret_events SET {sets}, updated_at = now() WHERE id = %(event_id)s",
+                    {**fields, "event_id": event_id})
+        _write_reworks(cur, event_id, rows)
+
+
+# ── Daily Usage ─────────────────────────────────────────────────────────────
+
+def usage_period(key: str | None, start: str | None = None, end: str | None = None,
+                 today: datetime.date | None = None) -> tuple[str, datetime.date, datetime.date]:
+    """(key, start, end), inclusive, for a Daily Usage period. Weeks run
+    Monday-Sunday, same as every other week in this app."""
+    today = today or _today()
+    key = key if key in dict(USAGE_PERIODS) else "today"
+    monday = today - datetime.timedelta(days=today.weekday())
+    first = today.replace(day=1)
+    if key == "yesterday":
+        day = today - datetime.timedelta(days=1)
+        return key, day, day
+    if key == "this_week":
+        return key, monday, monday + datetime.timedelta(days=6)
+    if key == "last_week":
+        return key, monday - datetime.timedelta(days=7), monday - datetime.timedelta(days=1)
+    if key == "this_month":
+        next_first = (first + datetime.timedelta(days=32)).replace(day=1)
+        return key, first, next_first - datetime.timedelta(days=1)
+    if key == "last_month":
+        last_day = first - datetime.timedelta(days=1)
+        return key, last_day.replace(day=1), last_day
+    if key == "custom":
+        try:
+            s = datetime.date.fromisoformat(start) if start else today
+            e = datetime.date.fromisoformat(end) if end else s
+        except ValueError:
+            s = e = today
+        return key, min(s, e), max(s, e)
+    return key, today, today
+
+
+def daily_usage(start: datetime.date, end: datetime.date, include_test: bool = False) -> list[dict]:
+    """Tally of sheet material per item between start and end (inclusive).
+
+    `used` = Material 1/2/Other quantities on jobs entered in the period (by
+    entry date). `scrapped` = rework/scrap recorded in the period (by each
+    slot's own scrap date). `jobs` = how many separate entries used it."""
+    test_clause = "" if include_test else "AND (sales_number IS NULL OR LOWER(sales_number) <> LOWER(%(test_so)s))"
+    used_sql = " UNION ALL ".join(
+        f"SELECT id AS event_id, sheet_{s} AS item, qty_{s}_ordered AS qty, sales_number FROM turret_events "
+        f"WHERE sheet_{s} IS NOT NULL AND event_date BETWEEN %(start)s AND %(end)s"
+        for s in SHEET_SLOTS
+    )
+    params = {"start": start, "end": end, "test_so": test_data.SO_NUMBER}
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT item, SUM(COALESCE(qty, 0)) AS used, COUNT(DISTINCT event_id) AS jobs "
+            f"FROM ({used_sql}) u WHERE 1 = 1 {test_clause} GROUP BY item",
+            params,
+        )
+        used = cur.fetchall()
+        cur.execute(
+            f"SELECT item, SUM(qty) AS scrapped FROM ({_UNPIVOT_SCRAP}) s "
+            f"WHERE item IS NOT NULL AND scrap_date BETWEEN %(start)s AND %(end)s {test_clause} GROUP BY item",
+            params,
+        )
+        scrapped = cur.fetchall()
+        codes = sorted({r["item"] for r in used} | {r["item"] for r in scrapped})
+        descriptions = {}
+        if codes:
+            cur.execute(f"SELECT part_number, description FROM items WHERE {db.in_values('part_number', '%s')}",
+                        (codes,))
+            descriptions = {r["part_number"]: r["description"] for r in cur.fetchall()}
+
+    tally = {c: {"item": c, "description": descriptions.get(c), "used": 0.0, "scrapped": 0.0, "jobs": 0}
+             for c in codes}
+    for r in used:
+        tally[r["item"]]["used"] = float(r["used"] or 0)
+        tally[r["item"]]["jobs"] = int(r["jobs"] or 0)
+    for r in scrapped:
+        tally[r["item"]]["scrapped"] = float(r["scrapped"] or 0)
+    for row in tally.values():
+        row["total"] = row["used"] + row["scrapped"]
+    return sorted(tally.values(), key=lambda r: (-r["total"], r["item"]))

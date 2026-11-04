@@ -37,11 +37,15 @@
         </select>
       </div>
       <div class="field">
+        <label for="sales_number">Sales number</label>
+        <input type="text" id="sales_number" name="sales_number" value="{{ filters.sales_number or '' }}" placeholder="S000…">
+      </div>
+      <div class="field">
         <label for="job_number">Job number</label>
         <input type="text" id="job_number" name="job_number" value="{{ filters.job_number or '' }}" placeholder="J000…">
       </div>
       <button type="submit" class="btn-primary" style="width:auto; padding:0 20px;">Filter</button>
-      {% if filters.year or filters.month or filters.door_type or filters.job_number %}
+      {% if filters.year or filters.month or filters.door_type or filters.job_number or filters.sales_number %}
       <a href="{{ url_for('turret.list_page') }}" class="btn-text">Clear filters</a>
       {% endif %}
     </div>
@@ -82,7 +86,7 @@
             <td class="col-wide">{{ e.variation or "" }}</td>
             <td>{{ e.scrap_code or "—" }}</td>
             <td class="col-right">
-              {% set total_scrap = (e.scrap_qty_a or 0) + (e.scrap_qty_b or 0) + (e.scrap_qty_c or 0) %}
+              {% set total_scrap = (e.scrap_qty_a or 0) + (e.scrap_qty_b or 0) + (e.scrap_qty_c or 0) + (e.rework_qty or 0) %}
               {{ total_scrap|int if total_scrap else "—" }}
             </td>
             <td class="col-nowrap col-right">{{ "$%.2f"|format(e.scrap_cost) if e.scrap_cost is not none else "—" }}</td>

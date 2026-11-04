@@ -677,6 +677,33 @@ rework type (`Replacement Parts` / `Rework Entire Door`), a reason, and up
 to 3 rework material slots, each getting its own `scrap_date` stamped
 server-side.
 
+**Multiple reworks per job, Open/Variation, entry date, Daily Usage**
+(2026-11-04, migration `0017` / sqlite `0004`):
+- A job can have any number of reworks ("+ Add rework"), each with its own
+  type, reason and up to 3 Sheet materials -- one row per rework in
+  `turret_reworks` (FK to `turret_events`, `ON DELETE CASCADE`). The
+  single `rework_type`/`reason`/`scrap_*` columns on `turret_events` now
+  only hold **historical imported** scrap; the migration moved any web-form
+  rework into the child table. `services.turret._UNPIVOT_SCRAP` unions both
+  sources, so write-off/reconciliation see everything once. Editing a
+  historical row surfaces its parent scrap as a rework with id `"legacy"`;
+  saving moves it into `turret_reworks`, keeping its original scrap dates.
+  `turret_events.scrap_cost` = the job's total across its reworks.
+- Scrap dates are still stamped once, preserved per (rework id, slot) --
+  the form reloads after every save so each rework carries its real id.
+- `event_date` (shown read-only as "Date") is stamped server-side to NZ
+  today on create and never changed by `update_event` -- previously the
+  client sent `toISOString()` (UTC, so the day before for NZ mornings) and
+  every edit re-sent today's date, moving the entry date.
+- Open (`open_status`) and Variation (`variation`) are dropdowns fed by
+  `turret_open_options` / `turret_variations` -- Admin -> Turret Open /
+  Turret Variations, the same named-table pattern as Work Centres/People
+  (rename cascades into `turret_events`). Open is seeded with the 4 values
+  history actually uses; Variation is left for the department to fill in.
+- Daily Usage (`/turret/usage`): per-item tally of Material 1/2/Other by
+  entry date, plus rework material by scrap date, over Today / Yesterday /
+  This/Last week / This/Last month / custom range.
+
 **Reason reuses Doors' shared `rework_reasons` list** -- originally built
 as its own separate `turret_reasons` table/Admin tab (2026-10-21), reversed
 the next day (2026-10-22): the department asked for the shared list

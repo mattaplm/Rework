@@ -82,22 +82,100 @@ def test_entries_reporting_search_and_iso_writeoffs(sqlite_store):
     assert audit.list_recent()[0]["detail"] == {"ok": True}
 
 
-def test_turret_edit_and_writeoff_week_arrays(sqlite_store):
-    data = dict(event_date="2025-12-31", sales_number="SO1", door_type="Axis",
-                colour="Black", sheet_a="SHEET", qty_a=1)
-    event_id = turret.create_event(data, 1)
-    data.update(scrap_sheet_a="SHEET", scrap_qty_a=2, reason="DAMAGE", rework_type="Replacement Parts")
-    turret.update_event(event_id, data)
-    original_stamp = turret.get_event(event_id)["scrap_date_a"]
-    turret.update_event(event_id, data)
-    assert turret.get_event(event_id)["scrap_date_a"] == original_stamp
-    with db.get_conn() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE turret_events SET scrap_date_a = %s WHERE id = %s", (date(2025, 12, 31), event_id))
+def _turret_job(**extra):
+    return {**dict(sales_number="SO1", door_type="Axis", colour="Black", sheet_a="SHEET", qty_a=1), **extra}
+
+
+def _rework(sheet="SHEET", qty=2, rework_id=None, rework_type="Replacement Parts"):
+    return {"id": rework_id, "rework_type": rework_type, "reason": "DAMAGE",
+            "materials": [{"sheet": sheet, "qty": qty}]}
+
+
+def test_turret_edit_and_writeoff_week_arrays(sqlite_store, monkeypatch):
+    monkeypatch.setattr(turret, "_today", lambda: date(2025, 12, 31))
+    event_id = turret.create_event(_turret_job(event_date="2020-01-01"), 1)
+    event = turret.get_event(event_id)
+    assert event["event_date"] == date(2025, 12, 31)  # stamped server-side, client value ignored
+    assert event["reworks"] == []
+
+    turret.update_event(event_id, _turret_job(reworks=[_rework()]))
+    first = turret.get_event(event_id)["reworks"][0]
+    assert first["scrap_date_a"] == date(2025, 12, 31)
+    monkeypatch.setattr(turret, "_today", lambda: date(2026, 1, 9))
+    turret.update_event(event_id, _turret_job(reworks=[_rework(rework_id=first["id"])]))
+    again = turret.get_event(event_id)
+    assert again["reworks"][0]["id"] == first["id"]
+    assert again["reworks"][0]["scrap_date_a"] == date(2025, 12, 31)  # not re-stamped
+    assert again["event_date"] == date(2025, 12, 31)  # entry date never moves
+
     rows = turret.scrap_summary_by_week(2, 2026)
     assert rows[0]["from_weeks"] == [1]
     assert rows[0]["total_qty"] == 2
     assert turret.list_available_scrap_weeks() == [{"write_off_year": 2026, "write_off_week": 2}]
     assert len(turret.list_events(filters={"year": "2025", "month": "12"})) == 1
+
+
+def test_turret_multiple_reworks_options_and_usage(sqlite_store, monkeypatch):
+    monkeypatch.setattr(turret, "_today", lambda: date(2026, 11, 4))  # a Wednesday
+    assert turret.list_options("turret_open_options") == ["LH IN", "RH IN", "LH OUT", "RH OUT"]
+    admin_data.create_named("turret_variations", "More sheets used")
+    event_id = turret.create_event(_turret_job(
+        sales_number="S000123", open_status="LH IN", variation="More sheets used",
+        reworks=[_rework(qty=2), _rework(qty=3, rework_type="Rework Entire Door"), {"reason": "", "materials": []}],
+    ), 1)
+    event = turret.get_event(event_id)
+    assert event["open_status"] == "LH IN" and event["variation"] == "More sheets used"
+    assert [r["scrap_qty_a"] for r in event["reworks"]] == [2, 3]  # blank rework dropped
+    assert float(event["scrap_cost"]) == 50.0  # (2 + 3) x $10
+    listed = turret.list_events(filters={"sales_number": "s000123"})
+    assert len(listed) == 1 and float(listed[0]["rework_qty"]) == 5
+    assert turret.list_events(filters={"sales_number": "nope"}) == []
+
+    # Removing a rework deletes it; the job total follows.
+    keep = event["reworks"][1]
+    turret.update_event(event_id, _turret_job(sales_number="S000123", variation="More sheets used",
+                                              reworks=[_rework(qty=3, rework_id=keep["id"])]))
+    event = turret.get_event(event_id)
+    assert [r["id"] for r in event["reworks"]] == [keep["id"]] and float(event["scrap_cost"]) == 30.0
+
+    with pytest.raises(turret.ValidationError):
+        turret.update_event(event_id, _turret_job(reworks=[_rework(rework_type="Bogus")]))
+
+    # Renaming a variation cascades into turret_events.
+    assert admin_data.save_named("turret_variations", "More sheets used", "EX(+) More sheets", 1) == 1
+    assert turret.get_event(event_id)["variation"] == "EX(+) More sheets"
+
+    usage = turret.daily_usage(date(2026, 11, 4), date(2026, 11, 4))
+    assert usage == [{"item": "SHEET", "description": "Sheet stock", "used": 1.0, "scrapped": 3.0, "jobs": 1, "total": 4.0}]
+    assert turret.daily_usage(date(2026, 11, 5), date(2026, 11, 30)) == []
+
+    today = date(2026, 11, 4)
+    assert turret.usage_period("today", today=today)[1:] == (today, today)
+    assert turret.usage_period("this_week", today=today)[1:] == (date(2026, 11, 2), date(2026, 11, 8))
+    assert turret.usage_period("last_week", today=today)[1:] == (date(2026, 10, 26), date(2026, 11, 1))
+    assert turret.usage_period("last_month", today=today)[1:] == (date(2026, 10, 1), date(2026, 10, 31))
+    assert turret.usage_period("this_month", today=date(2026, 12, 15))[1:] == (date(2026, 12, 1), date(2026, 12, 31))
+    assert turret.usage_period("custom", "2026-11-10", "2026-11-01", today=today)[1:] == (date(2026, 11, 1), date(2026, 11, 10))
+    assert turret.usage_period("junk", today=today)[0] == "today"
+
+
+def test_turret_historical_scrap_moves_into_reworks_keeping_dates(sqlite_store):
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO turret_events (event_date, sales_number, door_type, colour, sheet_a, "
+            "scrap_sheet_a, scrap_qty_a, scrap_date_a, source_row_hash) "
+            "VALUES (%s, 'SO9', 'Axis', 'Black', 'SHEET', 'SHEET', 4, %s, 'hash') RETURNING id",
+            (date(2025, 3, 3), date(2025, 3, 4)),
+        )
+        event_id = cur.fetchone()["id"]
+    legacy = turret.get_event(event_id)["reworks"]
+    assert len(legacy) == 1 and legacy[0]["id"] == "legacy"
+    turret.update_event(event_id, _turret_job(sales_number="SO9", reworks=[
+        _rework(qty=4, rework_id="legacy"), _rework(qty=1)]))
+    event = turret.get_event(event_id)
+    assert event["scrap_qty_a"] is None  # moved off the parent row
+    assert [r["scrap_date_a"] for r in event["reworks"]][0] == date(2025, 3, 4)
+    assert sum(r["total_qty"] for r in turret.scrap_summary_by_week()) == 5  # not double-counted
 
 
 def test_erp_upserts_cleanup_and_schedule_timestamps(sqlite_store, monkeypatch):
@@ -158,13 +236,24 @@ def test_http_login_pin_change_and_all_pages(sqlite_store, monkeypatch):
     response = client.post("/login", data={"username": "admin", "password": "6543"})
     assert response.location.endswith("/change-password")
     assert client.post("/change-password", data={"new_password": "5678", "confirm": "5678"}).status_code == 302
-    for path in ("/dashboard", "/rework", "/rework/new", "/turret", "/turret/new", "/admin", "/import"):
+    for path in ("/dashboard", "/rework", "/rework/new", "/turret", "/turret?sales_number=S00", "/turret/new",
+                 "/turret/usage", "/turret/usage?period=last_week", "/turret/usage?period=custom&start=2026-01-01&end=bad",
+                 "/admin", "/import"):
         assert client.get(path).status_code == 200, path
     assert client.post("/api/rework-events", json=payload()).status_code == 400  # Person is required
     posted = client.post("/api/rework-events", json={**payload(), "person": "gary"})
     assert posted.status_code == 200
     assert posted.get_json()["event"]["entered_by_name"] == "Gary"  # matched/created case-insensitively
     assert client.get("/rework").status_code == 200
+    turret_job = {"sales_number": "SO1", "door_type": "Axis", "colour": "Black", "sheet_a": "SHEET", "qty_a": 1,
+                  "open_status": "RH IN", "reworks": [{"rework_type": "Replacement Parts", "reason": "DAMAGE",
+                                                       "materials": [{"sheet": "SHEET", "qty": 1}]}]}
+    created = client.post("/api/turret-events", json=turret_job)
+    assert created.status_code == 200
+    turret_id = created.get_json()["id"]
+    assert client.get(f"/turret/{turret_id}/edit").status_code == 200
+    assert client.post(f"/api/turret-events/{turret_id}", json=turret_job).status_code == 200
+    assert client.post("/api/admin/turret_variations", json={"name": "Sheet swapped"}).status_code == 200
     assert client.post("/logout").status_code == 302
     assert client.get("/api/users").status_code == 401
 

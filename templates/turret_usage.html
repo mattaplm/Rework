@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Daily usage · Doors Rework{% endblock %}
+{% block content %}
+
+<form class="card" method="get" id="usageForm" style="margin-bottom:16px;">
+  <h2>Turret daily usage <span class="optional">sheet material tally per item</span></h2>
+  <div class="filters" style="margin-top:10px;">
+    <div class="field">
+      <label for="period">Period</label>
+      <select id="period" name="period">
+        {% for key, label in periods %}<option value="{{ key }}" {% if period == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field custom-range" {% if period != 'custom' %}hidden{% endif %}>
+      <label for="start">From</label>
+      <input type="date" id="start" name="start" value="{{ start.isoformat() }}">
+    </div>
+    <div class="field custom-range" {% if period != 'custom' %}hidden{% endif %}>
+      <label for="end">To</label>
+      <input type="date" id="end" name="end" value="{{ end.isoformat() }}">
+    </div>
+    <button type="submit" class="btn-primary custom-range" style="width:auto; padding:0 20px;" {% if period != 'custom' %}hidden{% endif %}>Show</button>
+  </div>
+  <p class="hint" style="margin-top:8px;">
+    {% if start == end %}{{ start.strftime("%a %d %b %Y") }}{% else %}{{ start.strftime("%a %d %b %Y") }} – {{ end.strftime("%a %d %b %Y") }}{% endif %}
+  </p>
+</form>
+
+{% if rows %}
+<div class="card">
+  <div class="table-scroll">
+    <table class="rework-table">
+      <thead>
+        <tr><th>Item</th><th>Description</th><th class="col-right">Jobs</th><th class="col-right">Used</th><th class="col-right">Reworked / scrapped</th><th class="col-right">Total</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="col-nowrap">{{ r.item }}</td>
+          <td class="col-wide">{{ r.description or "—" }}</td>
+          <td class="col-right">{{ r.jobs or "—" }}</td>
+          <td class="col-right">{{ "%g"|format(r.used) }}</td>
+          <td class="col-right">{{ "%g"|format(r.scrapped) if r.scrapped else "—" }}</td>
+          <td class="col-right"><strong>{{ "%g"|format(r.total) }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3"><strong>Total</strong></td>
+          <td class="col-right"><strong>{{ "%g"|format(totals.used) }}</strong></td>
+          <td class="col-right"><strong>{{ "%g"|format(totals.scrapped) }}</strong></td>
+          <td class="col-right"><strong>{{ "%g"|format(totals.total) }}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="hint" style="margin-top:10px;">"Used" is Material 1/2/Other on turret entries logged in this period (by entry date). "Reworked / scrapped" is rework material recorded in this period (by the date it was recorded), so a rework added today against an older job counts today. "Jobs" is how many entries used that item.</p>
+</div>
+{% else %}
+<div class="card empty-state">
+  <p>No turret material logged for this period.</p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var period = document.getElementById("period");
+  period.addEventListener("change", function () {
+    if (period.value === "custom") {
+      document.querySelectorAll(".custom-range").forEach(function (el) { el.hidden = false; });
+      return;
+    }
+    document.getElementById("start").disabled = true;
+    document.getElementById("end").disabled = true;
+    document.getElementById("usageForm").submit();
+  });
+})();
+</script>
+{% endblock %}

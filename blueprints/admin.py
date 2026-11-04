@@ -34,6 +34,8 @@ def admin_page():
         reasons=admin_data.list_reasons_all(),
         work_centres=admin_data.list_named_all("work_centres"),
         people=admin_data.list_named_all("people"),
+        turret_open_options=admin_data.list_named_all("turret_open_options"),
+        turret_variations=admin_data.list_named_all("turret_variations"),
         colours=admin_data.list_colours_all(),
         cpq_door_codes=admin_data.list_cpq_door_codes(),
         erp_status=admin_data.erp_sync_status(),
@@ -255,7 +257,7 @@ def api_update_reason(reason_id: int):
 
 # ── Work centres ─────────────────────────────────────────────────────────
 
-@bp.route("/api/admin/<any(work_centres,people):table>", methods=["POST"])
+@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations):table>", methods=["POST"])
 @role_required("admin")
 def api_create_named(table: str):
     data = request.get_json(force=True, silent=True) or {}
@@ -272,7 +274,7 @@ def api_create_named(table: str):
     return jsonify({"ok": True})
 
 
-@bp.route("/api/admin/<any(work_centres,people):table>/<path:name>/active", methods=["POST"])
+@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations):table>/<path:name>/active", methods=["POST"])
 @role_required("admin")
 def api_set_named_active(table: str, name: str):
     active = bool((request.get_json(force=True, silent=True) or {}).get("active", True))
@@ -281,7 +283,7 @@ def api_set_named_active(table: str, name: str):
     return jsonify({"ok": True})
 
 
-@bp.route("/api/admin/<any(work_centres,people):table>/<path:name>/save", methods=["POST"])
+@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations):table>/<path:name>/save", methods=["POST"])
 @role_required("admin")
 def api_save_named(table: str, name: str):
     data = request.get_json(force=True, silent=True) or {}

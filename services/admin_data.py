@@ -65,7 +65,7 @@ def save_reason(reason_id: int, reason: str, code: str | None, source: str, faul
 
 # ── Work centres (door_types merged into cpq_door_codes.family_name below) ──
 
-_NAMED_TABLES = {"work_centres", "people"}
+_NAMED_TABLES = {"work_centres", "people", "turret_open_options", "turret_variations"}
 
 
 def _check_table(table: str) -> str:
@@ -99,7 +99,13 @@ def set_named_active(table: str, name: str, active: bool) -> None:
         cur.execute(f"UPDATE {table} SET active = %s WHERE name = %s", (active, name))
 
 
-_NAMED_EVENT_COLUMN = {"work_centres": "work_centre", "people": "entered_by_name"}
+# (events table, column) a rename cascades into -- plain text there, no FK.
+_NAMED_EVENT_COLUMN = {
+    "work_centres": ("rework_events", "work_centre"),
+    "people": ("rework_events", "entered_by_name"),
+    "turret_open_options": ("turret_events", "open_status"),
+    "turret_variations": ("turret_events", "variation"),
+}
 
 
 def save_named(table: str, old_name: str, new_name: str, sort_order: int) -> int:
@@ -116,13 +122,13 @@ def save_named(table: str, old_name: str, new_name: str, sort_order: int) -> int
     just changed."""
     table = _check_table(table)
     new_name = new_name.strip()
-    event_column = _NAMED_EVENT_COLUMN[table]
+    event_table, event_column = _NAMED_EVENT_COLUMN[table]
     with db.get_conn() as conn, conn.cursor() as cur:
         updated = 0
         if new_name != old_name:
             cur.execute(f"UPDATE {table} SET name = %s WHERE name = %s", (new_name, old_name))
             cur.execute(
-                f"UPDATE rework_events SET {event_column} = %s WHERE {event_column} = %s",
+                f"UPDATE {event_table} SET {event_column} = %s WHERE {event_column} = %s",
                 (new_name, old_name),
             )
             updated = cur.rowcount
