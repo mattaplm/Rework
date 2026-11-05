@@ -31,7 +31,7 @@ def login_page():
 
     if not user or not user["active"]:
         return render_template("login.html", error="Incorrect username or PIN.", usernames=_active_usernames(), selected_username=username), 401
-    # Viewer accounts with no PIN set log in on username alone -- whatever
+    # Viewer/operator accounts with no PIN set log in on username alone -- whatever
     # was typed in the PIN field (even nothing) is ignored for this case.
     # Every other account still needs a correct PIN.
     if not auth_service.can_login_without_pin(user):

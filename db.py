@@ -246,6 +246,15 @@ def set_user_role(user_id: int, role: str) -> None:
         cur.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
 
 
+def rename_user(user_id: int, username: str) -> None:
+    """Sessions carry their own copy of username, so update those too --
+    otherwise a logged-in user keeps showing (and auditing as) the old name
+    until they next log in."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE users SET username = %s WHERE id = %s", (username, user_id))
+        cur.execute("UPDATE sessions SET username = %s WHERE user_id = %s", (username, user_id))
+
+
 def set_user_active(user_id: int, active: bool) -> None:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("UPDATE users SET active = %s WHERE id = %s", (active, user_id))

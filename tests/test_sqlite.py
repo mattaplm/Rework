@@ -258,6 +258,27 @@ def test_http_login_pin_change_and_all_pages(sqlite_store, monkeypatch):
     assert client.get("/api/users").status_code == 401
 
 
+def test_operator_without_pin_rename_and_admin_guard(sqlite_store, monkeypatch):
+    monkeypatch.setattr(scheduled_sync, "start_background_thread", lambda: None)
+    from app import create_app
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    client.post("/login", data={"username": "admin", "password": "6543"})
+    client.post("/change-password", data={"new_password": "5678", "confirm": "5678"})
+    created = client.post("/api/users", json={"username": "logn", "password": "", "role": "operator"})
+    assert created.status_code == 200
+    uid = created.get_json()["id"]
+    assert client.post("/api/users", json={"username": "x", "password": "", "role": "admin"}).status_code == 400
+    assert client.post(f"/api/users/{uid}/role", json={"role": "admin"}).status_code == 400  # no PIN yet
+    assert client.post(f"/api/users/{uid}/rename", json={"username": "admin"}).status_code == 400  # taken
+    assert client.post(f"/api/users/{uid}/rename", json={"username": "Logan"}).status_code == 200
+    client.post("/logout")
+    response = client.post("/login", data={"username": "Logan", "password": ""})
+    assert response.status_code == 302 and response.location.endswith("/dashboard")
+    assert client.get("/rework/new").status_code == 200  # operator-level page
+
+
 def test_online_backup_restores_entries_and_survives_restart(sqlite_store, monkeypatch):
     original = rework.create_event(payload(), 1)
     backup = backup_database(sqlite_store / "rework.sqlite3", sqlite_store / "backups")

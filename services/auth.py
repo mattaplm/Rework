@@ -20,22 +20,26 @@ ROLE_RANK = {role: i for i, role in enumerate(ROLES)}
 
 _PIN_RE = re.compile(r"^\d{4}$")
 
+# Roles that may have no PIN at all (log in on username alone). Operator was
+# added 2026-11-05 ("this doesn't actually need one"); admin always needs one.
+PIN_OPTIONAL_ROLES = ("viewer", "operator")
+
 
 def is_valid_pin(value: str) -> bool:
     """4-digit PIN auth (replaced free-text passwords 2026-10-22) -- exactly
-    4 digits, nothing else. Viewer accounts don't need one at all (see
-    `can_login_without_pin`); every other role must have one."""
+    4 digits, nothing else. Viewer/operator accounts don't need one at all
+    (see `can_login_without_pin`); admin must have one."""
     return bool(_PIN_RE.fullmatch(value or ""))
 
 
 def can_login_without_pin(user: dict) -> bool:
-    """Viewer accounts with no PIN set log in on username alone -- the
-    login form still has a PIN field (shared with operator/admin), but
+    """Viewer/operator accounts with no PIN set log in on username alone --
+    the login form still has a PIN field (shared with admin), but
     whatever's typed there is ignored for this case. Anything stored in
     `password_hash` means a PIN was deliberately set, so it's still
-    checked normally even for a viewer (an admin can still give a viewer a
-    real PIN via Reset Password if they want one)."""
-    return user["role"] == "viewer" and user["password_hash"] is None
+    checked normally (an admin can still give one a real PIN via Reset
+    Password if they want)."""
+    return user["role"] in PIN_OPTIONAL_ROLES and user["password_hash"] is None
 
 
 def login_user(user: dict) -> None:

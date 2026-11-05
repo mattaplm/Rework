@@ -297,6 +297,15 @@ admin account (`db._ensure_default_admin`) now generates a 4-digit PIN
 instead of a long random password when `ADMIN_DEFAULT_PASSWORD` is unset,
 same policy.
 
+**Operators need no PIN either** (2026-11-05): `services.auth.
+PIN_OPTIONAL_ROLES = ("viewer", "operator")` -- the viewer rules above now
+apply to operator too; only admin must have a PIN. Migration `0019` /
+sqlite `0006` cleared every existing operator PIN. `set_role` refuses to
+promote a PIN-less account to admin (it could never log in) -- set a PIN
+via Reset password first. Admin -> Users also has a **Rename** button
+(`/api/users/<id>/rename`, updates `sessions.username` too, audited as
+`user.rename`).
+
 **Audit Log** (`services/audit.py`, `audit_log` table, Admin -> Audit Log,
 2026-10-22, requested as "full logging of entries and modifications and
 logons by username"): every successful logon, every rework/turret entry

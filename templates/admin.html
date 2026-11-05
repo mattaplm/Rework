@@ -395,6 +395,7 @@
               <button class="btn-sm user-toggle-active" data-id="{{ u.id }}" data-active="{{ u.active|lower }}">{{ "Deactivate" if u.active else "Activate" }}</button>
               <button class="btn-sm danger user-delete" data-id="{{ u.id }}">Delete</button>
               {% endif %}
+              <button class="btn-sm user-rename" data-id="{{ u.id }}" data-username="{{ u.username }}">Rename</button>
               <button class="btn-sm user-reset-pw" data-id="{{ u.id }}">Reset password</button>
             </span>
           </td>
@@ -404,7 +405,7 @@
     </table>
     <form class="inline-form" id="formNewUser">
       <input type="text" name="username" placeholder="Username" required>
-      <input type="password" name="password" placeholder="4-digit PIN (blank for viewer)" inputmode="numeric" pattern="\d{4}" maxlength="4">
+      <input type="password" name="password" placeholder="4-digit PIN (blank for viewer/operator)" inputmode="numeric" pattern="\d{4}" maxlength="4">
       <select name="role">
         <option value="viewer">viewer</option>
         <option value="operator" selected>operator</option>
@@ -852,9 +853,18 @@
       });
     });
   });
+  document.querySelectorAll(".user-rename").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var name = window.prompt("New username:", btn.dataset.username);
+      if (name === null || name.trim() === "" || name.trim() === btn.dataset.username) return;
+      post("/api/users/" + btn.dataset.id + "/rename", { username: name.trim() }).then(function (res) {
+        if (res.ok) location.reload(); else showToast(res.data.error || "Failed", true);
+      });
+    });
+  });
   document.querySelectorAll(".user-reset-pw").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      var pw = window.prompt("New 4-digit PIN (leave blank to clear -- viewer accounts only):");
+      var pw = window.prompt("New 4-digit PIN (leave blank to clear -- viewer/operator only):");
       if (pw === null) return;
       post("/api/users/" + btn.dataset.id + "/reset-password", { password: pw }).then(function (res) {
         showToast(res.ok ? "Password reset." : (res.data.error || "Failed"), !res.ok);
