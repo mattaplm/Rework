@@ -51,9 +51,10 @@
   <p class="hint">
     Upload one of the standalone <code>Turret Sheet Audit YYYY.xlsx</code> workbooks
     (2024/2025/2026) — not the combined rework workbook, which has its own separate
-    Turret tab that isn't imported. Scrap-only rows are kept; rows with nothing scrapped
-    are skipped by design. Safe to re-upload — already-imported rows are detected and
-    skipped automatically.
+    Turret tab that isn't imported. Every job row is imported — production sheet usage
+    as well as scrap. Safe to re-upload — already-imported rows are detected and
+    skipped automatically, so a workbook imported before production rows were kept
+    just fills in the missing ones.
   </p>
 
   <form method="post" enctype="multipart/form-data" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
@@ -79,10 +80,6 @@
     <div class="stat-tile">
       <div class="stat-label">Already imported</div>
       <div class="stat-value">{{ turret_result.skipped_duplicate }}</div>
-    </div>
-    <div class="stat-tile">
-      <div class="stat-label">Skipped (no scrap)</div>
-      <div class="stat-value">{{ turret_result.skipped_not_scrap }}</div>
     </div>
     <div class="stat-tile">
       <div class="stat-label">Skipped (invalid)</div>

@@ -6,15 +6,16 @@ Data.xlsx, a different source entirely) is still not imported -- see
 CLAUDE.md. Same dedup convention as services/rework_import.py
 (source_row_hash, safe to re-run against a newer export of the same sheet).
 
-Scrap-only, by design (2026-10-21): Sheet1 is really a job-sheet-usage
-tracker that *also* has scrap recorded against some rows, not a scrap log
-on its own -- most rows have no scrap at all (just which sheets a job used).
-This app only cares about the scrap side, so `_clean` drops any row with no
-scrap recorded (no scrap qty on any of the 3 slots and no scrap code) --
-~5,300 of the real sheet's ~5,900 rows. A blank Scrap Date slot on an
-imported row just means that particular slot had nothing scrapped, not
-missing data -- a row can have scrap on slot A only, with B/C genuinely
-unused.
+Every row, production usage included (2026-11-11): Sheet1 is really a
+job-sheet-usage tracker that *also* has scrap recorded against some rows.
+This importer used to keep only the scrap rows (2026-10-21) -- ~5,300 of
+each year's ~5,900 rows were dropped as "no scrap". The department now wants
+the production history too (Turret log, Daily Usage), so every row with a
+valid date is imported. Re-uploading a workbook that was imported under the
+old scrap-only rule is safe: the scrap rows hash the same as before and are
+skipped as already imported, and only the missing production rows go in.
+A blank Scrap Date slot on an imported row just means that particular slot
+had nothing scrapped, not missing data.
 
 Column layout confirmed live against the real workbook 2026-10-21: one row
 per turret job, up to 3 raw sheet slots (A/B/C) each with an ordered qty vs.
@@ -63,7 +64,6 @@ class ImportResult:
     inserted: int = 0
     skipped_duplicate: int = 0
     skipped_invalid: int = 0
-    skipped_not_scrap: int = 0
     invalid_examples: list[str] = field(default_factory=list)
 
 
@@ -119,14 +119,6 @@ def _clean(row: tuple) -> dict | None:
     if any(values[f] in (None, "") for f in REQUIRED):
         return None
     return values
-
-
-def _has_scrap(values: dict) -> bool:
-    """This app only cares about the scrap side of the tracker -- see
-    module docstring. A row counts as scrap if any slot has a scrap qty, or
-    the shared scrap code is set (covers the rare row with a code but no
-    parsed qty)."""
-    return any(values[f] is not None for f in ("scrap_qty_a", "scrap_qty_b", "scrap_qty_c", "scrap_code"))
 
 
 # 2024's workbook ("Turret Sheet Audit 2024.xlsx") predates the 2025/2026
@@ -209,6 +201,7 @@ def parse_workbook(xlsx_path: str, sheet_name: str = "Sheet1", layout: str = "cu
 
 def import_workbook(xlsx_path: str, sheet_name: str = "Sheet1", layout: str = "current") -> ImportResult:
     result = ImportResult()
+    seen_in_file: dict[str, int] = {}
     with db.get_conn() as conn, conn.cursor() as cur:
         for raw, cleaned in parse_workbook(xlsx_path, sheet_name, layout):
             if cleaned is None:
@@ -216,10 +209,15 @@ def import_workbook(xlsx_path: str, sheet_name: str = "Sheet1", layout: str = "c
                 if len(result.invalid_examples) < 10:
                     result.invalid_examples.append(str(raw[:5]))
                 continue
-            if not _has_scrap(cleaned):
-                result.skipped_not_scrap += 1
-                continue
             row_hash = _row_hash(raw)
+            # Identical repeated rows (same job, same sheets, same day -- common
+            # now production rows are kept) are separate real entries, not a
+            # re-upload. Same rule as services/rework_import.py: the first
+            # occurrence keeps the plain hash, so rows already imported still
+            # dedup against it.
+            seen_in_file[row_hash] = seen_in_file.get(row_hash, 0) + 1
+            if seen_in_file[row_hash] > 1:
+                row_hash = _row_hash((row_hash, seen_in_file[row_hash]))
             cur.execute("SAVEPOINT row_sp")
             try:
                 cur.execute(

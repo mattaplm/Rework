@@ -13,7 +13,9 @@ interval. That means "daily at 02:00" always means 2am, not "some time in a
 ~24h window that drifts with whenever the background thread last woke up" --
 the distinction the admin UI is actually asking for when it lets someone
 pick a time. Monthly stays a simple ~30-day rolling check (no admin-facing
-day-of-month picker yet -- not asked for).
+day-of-month picker yet -- not asked for). Hourly (2026-11-11, Orders sync
+only -- see HOURLY_TASKS) runs at the schedule time's minute past every hour,
+e.g. "02:15" = hh:15.
 
 "Last synced" isn't tracked separately here -- `items`/`colours.synced_at`
 (already written by every sync, manual or scheduled) is the source of truth
@@ -48,7 +50,13 @@ from services import erp_sync
 
 logger = logging.getLogger(__name__)
 
-_CHECK_INTERVAL_SECONDS = 30 * 60  # how often the background thread checks whether a sync is due
+# How often the background thread checks whether a sync is due -- 5 minutes
+# since hourly orders sync was added (30 would let an hourly run slip by half
+# an hour). Each check is a couple of cheap local queries.
+_CHECK_INTERVAL_SECONDS = 5 * 60
+
+FREQUENCIES = ("daily", "weekly", "monthly")
+HOURLY_TASKS = ("orders",)  # only the Orders sync may run hourly
 
 # day_of_week: 0 = Monday ... 6 = Sunday (Python's datetime.weekday() convention)
 _DEFAULTS = {"frequency": "weekly", "time": "02:00", "day_of_week": 0}
@@ -87,6 +95,9 @@ def _set_schedule(prefix: str, enabled: bool, frequency: str, time_str: str, day
 def _most_recent_due(now: datetime, frequency: str, time_str: str, day_of_week: int) -> datetime:
     """The latest scheduled clock-time at or before `now` (both tz-aware, same tz)."""
     hh, mm = (int(p) for p in time_str.split(":"))
+    if frequency == "hourly":
+        candidate = now.replace(minute=mm, second=0, microsecond=0)
+        return candidate - timedelta(hours=1) if candidate > now else candidate
     candidate = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     if frequency == "weekly":
         candidate -= timedelta(days=(candidate.weekday() - day_of_week) % 7)
@@ -200,7 +211,8 @@ def start_background_thread() -> None:
     run_if_due/run_orders_sync_if_due/run_scrap_sync_if_due/erp_sync already
     handle all of that gracefully. Checking every 30 minutes (not every
     minute) means a scheduled time can run up to ~30 minutes late -- fine
-    for a daily/weekly reference-data sync, not worth a tighter loop."""
+    for a daily/weekly reference-data sync, not worth a tighter loop.
+    (Now every 5 minutes -- see _CHECK_INTERVAL_SECONDS.)"""
 
     def loop():
         while True:

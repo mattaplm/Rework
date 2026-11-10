@@ -254,3 +254,61 @@ def erp_sync_status() -> dict:
         "orders_synced": orders["n"], "orders_last_synced": _fmt_synced_at(orders["last_synced"]), "order_jobs_synced": order_jobs,
         "scrap_txns_synced": scrap_txns["n"], "scrap_txns_last_synced": _fmt_synced_at(scrap_txns["last_synced"]),
     }
+
+
+# ── Cost rates (Admin -> Cost, 2026-11-11) ──────────────────────────────────
+# Plain values in the `settings` key/value table (same as the schedules), so
+# no migration -- a key that was never saved just reads as its default.
+# Together they're Doors' PC (powder-coat) cost per rework -- see
+# pc_cost_per_rework and services/costing.py.
+COST_RATES = {
+    "cost_pc_flightbar_rate": ("PC flightbar rate", 72.0),
+    "cost_powder": ("Powder", 20.0),
+}
+
+
+def get_cost_rates() -> list[dict]:
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT key, value FROM settings WHERE {db.in_values('key', '%s')}", (list(COST_RATES),))
+        saved = {r["key"]: r["value"] for r in cur.fetchall()}
+    rates = []
+    for key, (label, default) in COST_RATES.items():
+        try:
+            value = float(saved[key]) if key in saved else default
+        except (TypeError, ValueError):
+            value = default
+        rates.append({"key": key, "label": label, "value": value, "default": default})
+    return rates
+
+
+def get_cost_rate(key: str) -> float:
+    return next(r["value"] for r in get_cost_rates() if r["key"] == key)
+
+
+def pc_cost_per_rework() -> float:
+    """Doors' powder-coat charge for one rework: flightbar rate + powder."""
+    return round(sum(r["value"] for r in get_cost_rates()), 2)
+
+
+def set_cost_rates(values: dict) -> dict[str, float]:
+    """Saves whichever known rates are in `values`. Each must be a number >= 0;
+    raises ValueError naming the bad field otherwise. Returns what was saved."""
+    cleaned = {}
+    for key, raw in values.items():
+        if key not in COST_RATES:
+            continue
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{COST_RATES[key][0]} must be a number.")
+        if number < 0 or number != number:
+            raise ValueError(f"{COST_RATES[key][0]} can't be negative.")
+        cleaned[key] = round(number, 4)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        for key, number in cleaned.items():
+            cur.execute(
+                "INSERT INTO settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (key, str(number)),
+            )
+    return cleaned

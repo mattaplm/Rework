@@ -42,6 +42,7 @@ def admin_page():
         erp_schedule=scheduled_sync.get_schedule(),
         orders_schedule=scheduled_sync.get_orders_schedule(),
         scrap_schedule=scheduled_sync.get_scrap_schedule(),
+        cost_rates=admin_data.get_cost_rates(),
         users=db.list_users(),
         test_data_enabled=test_data.is_enabled(),
         test_so_number=test_data.SO_NUMBER,
@@ -50,6 +51,19 @@ def admin_page():
         audit_log=audit.list_recent(),
         app_version=version.get_version(),
     )
+
+
+@bp.route("/api/admin/cost-rates", methods=["POST"])
+@role_required("admin")
+def api_set_cost_rates():
+    """Admin -> Cost: PC flightbar rate, Powder (services.admin_data.COST_RATES)."""
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        saved = admin_data.set_cost_rates(data)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    audit.log(_actor(), "cost_rates.update", detail=saved)
+    return jsonify({"ok": True, "rates": saved})
 
 
 @bp.route("/api/admin/door-codes/unmapped")
@@ -106,12 +120,13 @@ def api_erp_sync_colours():
     return jsonify({"ok": True, "count": count})
 
 
-def _parse_schedule_payload(data: dict) -> tuple[str, str, int] | tuple[None, None, None]:
+def _parse_schedule_payload(data: dict, allow_hourly: bool = False) -> tuple[str, str, int] | tuple[None, None, None]:
     """Shared validation for both schedule endpoints below. Returns
     (frequency, time_str, day_of_week) or (None, None, None) if invalid --
     caller turns that into a 400."""
     frequency = str(data.get("frequency", "")).strip()
-    if frequency not in ("daily", "weekly", "monthly"):
+    allowed = scheduled_sync.FREQUENCIES + (("hourly",) if allow_hourly else ())
+    if frequency not in allowed:
         return None, None, None
     time_str = str(data.get("time", "")).strip()
     parts = time_str.split(":")
@@ -163,7 +178,7 @@ def api_erp_sync_orders():
 @role_required("admin")
 def api_set_orders_schedule():
     data = request.get_json(force=True, silent=True) or {}
-    frequency, time_str, day_of_week = _parse_schedule_payload(data)
+    frequency, time_str, day_of_week = _parse_schedule_payload(data, allow_hourly=True)
     if frequency is None:
         return jsonify({"ok": False, "error": "Invalid schedule"}), 400
     scheduled_sync.set_orders_schedule(bool(data.get("enabled")), frequency, time_str, day_of_week)

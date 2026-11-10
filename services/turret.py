@@ -9,6 +9,13 @@ scrap_* columns. New web-form rows don't have that constraint:
 and `update_event` reopens that same row later to add it, same two-stage
 workflow as the real paper/spreadsheet process this replaces.
 
+The form works from the job number (2026-11-11): job number is required,
+the SO number is optional and auto-filled from the cached order. Material 1
+is optional too -- a job run entirely on an off-BOM sheet goes in "Other".
+A job run across several days is one entry per day, all sharing the job
+number (`list_entries_for_job`); each day's usage then lands on its own
+date in Daily Usage.
+
 A job can have any number of reworks (2026-11-04), each with its own type,
 reason and up to 3 scrapped materials -- stored one row per rework in
 `turret_reworks` (migration 0017). turret_events.scrap_cost stays the job's
@@ -20,13 +27,13 @@ from __future__ import annotations
 import datetime
 
 import db
-from services import erp_reconciliation, reference_data, test_data
+from services import erp_lookup, erp_reconciliation, reference_data, test_data
 from services.costing import compute_sheet_scrap_cost
 
 SHEET_SLOTS = ("a", "b", "c")
 REWORK_TYPES = ("Replacement Parts", "Rework Entire Door")
 
-REQUIRED_FIELDS = ("sales_number", "door_type", "colour", "sheet_a")
+REQUIRED_FIELDS = ("job_number", "door_type", "colour")
 
 # Daily Usage tab periods, in dropdown order.
 USAGE_PERIODS = (
@@ -44,9 +51,24 @@ class ValidationError(Exception):
 
 
 def _today() -> datetime.date:
-    """NZ wall-clock date (the host runs UTC) -- the entry date is stamped
-    server-side, never taken from the client."""
+    """NZ wall-clock date (the host runs UTC)."""
     return db.nz_now().date()
+
+
+def _event_date(payload: dict, default: datetime.date) -> datetime.date:
+    """The entry's date -- operator-editable since 2026-11-11 (back-dating a
+    missed entry, or logging each day of a multi-day job). Blank falls back
+    to `default`; a future date is refused."""
+    raw = str(payload.get("event_date") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = datetime.date.fromisoformat(raw[:10])
+    except ValueError:
+        raise ValidationError({"event_date": "Not a valid date."})
+    if value > _today():
+        raise ValidationError({"event_date": "Can't be in the future."})
+    return value
 
 
 def _clean_reworks(payload: dict) -> list[dict]:
@@ -346,7 +368,7 @@ def _job_fields(payload: dict) -> dict:
     fields = {
         "door_type": payload.get("door_type") or None,
         "sales_number": payload.get("sales_number") or None,
-        "job_number": payload.get("job_number") or None,
+        "job_number": erp_lookup.normalize_job_number(payload.get("job_number") or "") or None,
         "colour": payload.get("colour") or None,
         "open_status": payload.get("open_status") or None,
         "variation": payload.get("variation") or None,
@@ -361,13 +383,12 @@ def _job_fields(payload: dict) -> dict:
 def create_event(payload: dict, user_id: int | None) -> int:
     """Saves a job's material usage (plus any reworks already known).
 
-    `event_date` is the date of entry, stamped server-side to today (NZ) --
-    not something the operator picks or the client sends. `week_num` (the
-    job's production week, shown as "Production week(s)" on the Scrap
-    write-off tab) is that date's ISO week, set once here and never touched
-    by update_event."""
+    `event_date` is the operator's chosen date (default today, NZ). `week_num`
+    (the job's production week, shown as "Production week(s)" on the Scrap
+    write-off tab) is always that date's ISO week, kept in step by
+    update_event if the date is corrected."""
     reworks = _validate(payload)
-    event_date = _today()
+    event_date = _event_date(payload, _today())
     rows, total_cost = _rework_rows(reworks, None)
     fields = _job_fields(payload)
     cols = list(fields)
@@ -386,7 +407,8 @@ def create_event(payload: dict, user_id: int | None) -> int:
 
 def update_event(event_id: int, payload: dict) -> None:
     """Reopens an existing entry -- correct the job fields and add, change or
-    remove reworks. The entry date never changes. A historical row's own
+    remove reworks. The entry date only changes if the payload sends a new
+    one (week_num follows it). A historical row's own
     scrap columns (the "legacy" rework) move into turret_reworks on its first
     save here, keeping their original scrap dates. turret_events.scrap_cost
     becomes the sum of the row's reworks, recomputed on every save."""
@@ -395,13 +417,31 @@ def update_event(event_id: int, payload: dict) -> None:
     if existing is None:
         raise ValueError(f"turret_events {event_id} not found")
     rows, total_cost = _rework_rows(reworks, existing)
-    fields = {**_job_fields(payload), "rework_type": None, "reason": None,
+    event_date = _event_date(payload, existing["event_date"])
+    fields = {**_job_fields(payload), "event_date": event_date, "week_num": event_date.isocalendar()[1],
+              "rework_type": None, "reason": None,
               **{c: None for c in _SCRAP_COLUMNS}, "scrap_cost": total_cost}
     sets = ", ".join(f"{c} = %({c})s" for c in fields)
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(f"UPDATE turret_events SET {sets}, updated_at = now() WHERE id = %(event_id)s",
                     {**fields, "event_id": event_id})
         _write_reworks(cur, event_id, rows)
+
+
+def list_entries_for_job(job_number: str, exclude_id: int | None = None) -> list[dict]:
+    """Every entry already logged against this job, oldest first -- the entry
+    form shows these so a multi-day job is logged as "another day" rather
+    than by accident."""
+    job = erp_lookup.normalize_job_number(job_number)
+    if not job:
+        return []
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, event_date, sheet_a, qty_a_ordered, sheet_b, qty_b_ordered, sheet_c, qty_c_ordered "
+            "FROM turret_events WHERE LOWER(job_number) = LOWER(%s) AND id <> %s ORDER BY event_date, id",
+            (job, exclude_id or 0),
+        )
+        return cur.fetchall()
 
 
 # ── Daily Usage ─────────────────────────────────────────────────────────────

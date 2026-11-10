@@ -15,6 +15,7 @@
   <button class="tab-btn" data-tab="turret_variations">Turret Variations</button>
   <button class="tab-btn" data-tab="colours">Colours</button>
   <button class="tab-btn" data-tab="items">Items</button>
+  <button class="tab-btn" data-tab="cost">Cost</button>
   <button class="tab-btn" data-tab="users">Users</button>
   <button class="tab-btn" data-tab="audit_log">Audit Log</button>
 </div>
@@ -77,7 +78,7 @@
 <div class="tab-panel" data-panel="scheduled_tasks">
   <div class="card">
     <h2>Scheduled Tasks</h2>
-    <p class="hint">Run these SQL Server syncs automatically at a set time, instead of (or as well as) the manual buttons on SQL Connection. Times are the server's local clock; a task runs once, the first time the server sees its clock reach or pass that time on the scheduled day.</p>
+    <p class="hint">Run these SQL Server syncs automatically at a set time, instead of (or as well as) the manual buttons on SQL Connection. Times are the server's local clock; a task runs once, the first time the server sees its clock reach or pass that time on the scheduled day (checked every 5 minutes). Hourly (Orders only) runs at that time's minute past every hour -- e.g. 02:15 runs at 12:15, 13:15, ...</p>
 
     <table class="admin-table schedule-table" style="margin-top:14px;">
       <thead>
@@ -113,6 +114,7 @@
           <td>Doors — Orders Sync</td>
           <td>
             <select class="sched-frequency">
+              <option value="hourly" {% if orders_schedule.frequency == "hourly" %}selected{% endif %}>Hourly</option>
               <option value="daily" {% if orders_schedule.frequency == "daily" %}selected{% endif %}>Daily</option>
               <option value="weekly" {% if orders_schedule.frequency == "weekly" %}selected{% endif %}>Weekly</option>
             </select>
@@ -370,6 +372,32 @@
   </div>
 </div>
 
+<!-- ───────────────────────── Cost ───────────────────────── -->
+<div class="tab-panel" data-panel="cost">
+  <div class="card">
+    <h2>Cost rates</h2>
+    <p class="hint">Doors' PC (powder-coat) cost: flightbar rate + powder, currently
+      <strong>${{ '%.2f'|format(cost_rates|sum(attribute='value')) }}</strong>, charged once per rework entry on
+      Rework / Recoat and Replace Part (itemised separately from material cost). Scrap Entire Door has no PC cost.</p>
+    <form id="formCostRates" novalidate>
+      <table class="admin-table" style="max-width:520px;">
+        <thead><tr><th>Rate</th><th>Value ($)</th><th>Default</th></tr></thead>
+        <tbody>
+          {% for r in cost_rates %}
+          <tr>
+            <td><label for="{{ r.key }}">{{ r.label }}</label></td>
+            <td><input type="number" id="{{ r.key }}" name="{{ r.key }}" min="0" step="0.01" inputmode="decimal"
+                       value="{{ '%.2f'|format(r.value) }}" required style="max-width:140px;"></td>
+            <td class="hint">${{ '%.2f'|format(r.default) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" class="btn-sm accent" style="margin-top:12px;">Save</button>
+    </form>
+  </div>
+</div>
+
 <!-- ───────────────────────── Users ───────────────────────── -->
 <div class="tab-panel" data-panel="users">
   <div class="card">
@@ -551,6 +579,21 @@
       post(btn.dataset.endpoint, payload).then(function (res) {
         showToast(res.ok ? "Schedule saved." : (res.data.error || "Failed"), !res.ok);
       });
+    });
+  });
+
+  // ── Cost rates ──
+  document.getElementById("formCostRates").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var body = {};
+    var bad = null;
+    e.target.querySelectorAll("input[type=number]").forEach(function (input) {
+      if (input.value === "" || +input.value < 0) bad = bad || input;
+      body[input.name] = input.value;
+    });
+    if (bad) { showToast("Each rate needs a value of 0 or more.", true); bad.focus(); return; }
+    post("/api/admin/cost-rates", body).then(function (res) {
+      showToast(res.ok ? "Cost rates saved." : (res.data.error || "Failed"), !res.ok);
     });
   });
 

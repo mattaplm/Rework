@@ -40,6 +40,14 @@ def normalize_so_number(so_number: str) -> str:
     return "S" + match.group(1).zfill(9) if match else text
 
 
+def normalize_job_number(job_number: str) -> str:
+    """Same idea as normalize_so_number for jobs: 1117852 / j1117852 ->
+    J001117852. Anything else (e.g. free text like "REWORKS") is just trimmed."""
+    text = (job_number or "").strip()
+    match = re.fullmatch(r"[jJ]?(\d{1,9})", text)
+    return "J" + match.group(1).zfill(9) if match else text
+
+
 def _find_order_row(so_number: str) -> dict | None:
     """Case-insensitive, and the S000 prefix is optional (see normalize_so_number)."""
     with db.get_conn() as conn, conn.cursor() as cur:
@@ -57,9 +65,20 @@ def canonical_so_number(so_number: str) -> str:
 
 def lookup_order(so_number: str) -> dict | None:
     row = _find_order_row(so_number)
-    if not row:
-        return None
+    return _order_from_row(row) if row else None
 
+
+def lookup_order_by_job(job_number: str) -> dict | None:
+    """The Turret entry form works from the job number (2026-11-11) -- same
+    cached order, found by its job instead of its SO number."""
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM synced_orders WHERE LOWER(job_number) = LOWER(%s) ORDER BY so_number LIMIT 1",
+                    (normalize_job_number(job_number),))
+        row = cur.fetchone()
+    return _order_from_row(row) if row else None
+
+
+def _order_from_row(row: dict) -> dict:
     materials = []
     full_door_material_cost = None
     if row.get("job_number"):

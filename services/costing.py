@@ -8,6 +8,14 @@ Original formulas (M column of the `Rework` table):
     Cost          = 132  if R/T = "Rework / Recoat"
                     else  XLOOKUP(Product Code, SL_Items, Std Cost) * QTY TO REMOVE
 
+PC (powder-coat) cost replaces that flat 132 (2026-11-11): `pc_rate` (Admin
+-> Cost: PC flightbar rate + Powder, default $72 + $20) is charged on Rework /
+Recoat and Replace Part, itemised separately from material cost. Rework /
+Recoat has no material cost of its own now. It's a one-off per rework, not
+x quantity -- and once per *entry* across its material lines, which the
+caller (services.rework.create_events) handles by passing pc_rate=None for
+every line after the first chargeable one.
+
 Labour cost (the old sheet's "Cost 2" column, from per-part picking/cutting/
 machining/assembly rates) is deliberately not computed here -- not in use for
 now. `rework_events.labour_cost` stays in the schema for the historical rows
@@ -27,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-REWORK_RECOAT_FLAT_COST = 132.0
+PC_COST_TYPES = ("Rework / Recoat", "Replace Part")
 
 
 COMPONENTS = ("Stile", "Rail")
@@ -37,10 +45,11 @@ COMPONENTS = ("Stile", "Rail")
 class CostResult:
     qty_to_remove: float | None
     material_cost: float | None
+    pc_cost: float | None = None
 
     @property
     def total_cost(self) -> float:
-        return self.material_cost or 0
+        return (self.material_cost or 0) + (self.pc_cost or 0)
 
 
 def compute_costs(
@@ -50,6 +59,7 @@ def compute_costs(
     full_door_material_cost: float | None = None,
     job_material_qty: float | None = None,
     pieces_per_door: int | None = None,
+    pc_rate: float | None = None,
 ) -> CostResult:
     """`item` is a row from services.reference_data.get_item (or None if the
     product code isn't recognised) -- carries rule/std_cost.
@@ -71,11 +81,12 @@ def compute_costs(
     if rework_type == "Scrap Entire Door" and full_door_material_cost is not None:
         material_cost = full_door_material_cost
     elif rework_type == "Rework / Recoat":
-        material_cost = REWORK_RECOAT_FLAT_COST
+        material_cost = None  # PC cost only (see module docstring)
     elif item and item.get("std_cost") is not None and qty_to_remove is not None:
         material_cost = float(item["std_cost"]) * qty_to_remove
 
-    return CostResult(qty_to_remove=qty_to_remove, material_cost=material_cost)
+    pc_cost = round(float(pc_rate), 2) if pc_rate is not None and rework_type in PC_COST_TYPES else None
+    return CostResult(qty_to_remove=qty_to_remove, material_cost=material_cost, pc_cost=pc_cost)
 
 
 def compute_sheet_scrap_cost(qty: float | None, item: dict | None) -> float | None:

@@ -378,6 +378,27 @@ just `location.reload()` on success rather than patching the DOM --
 deliberate, this page is used occasionally, not continuously, so the simpler
 approach wins over a hand-rolled SPA.
 
+**Admin -> Cost** (2026-11-11): admin-set rates, `PC flightbar rate`
+(default $72) and `Powder` (default $20), stored in the `settings` table
+(`cost_pc_flightbar_rate` / `cost_powder` keys, no migration) via
+`services.admin_data.get_cost_rates`/`get_cost_rate`/`set_cost_rates`,
+saved through `POST /api/admin/cost-rates` (audited as
+`cost_rates.update`). A key never saved reads as its default. Add any
+new rate to `admin_data.COST_RATES` and the tab picks it up.
+
+**PC (powder-coat) cost on Doors entries** (2026-11-11, migration `0020` /
+sqlite `0007` adds `rework_events.pc_cost`): `admin_data.
+pc_cost_per_rework()` = flightbar rate + powder ($92 at defaults), charged
+on Rework / Recoat and Replace Part, **once per entry** (the first such
+material line pays it, later lines get NULL -- `rework.create_events`),
+never x quantity. Itemised separately: Replace Part keeps its material
+cost plus PC cost; Rework / Recoat is PC cost only (material NULL) --
+this **replaces the old flat $132** (`REWORK_RECOAT_FLAT_COST`, gone).
+Scrap Entire Door has no PC cost. Historical rows keep their own
+material_cost ($132s included) and NULL pc_cost. Dashboard totals add
+`pc_cost` in; the log has a PC column; the entry form's summary shows
+Material / PC / Total.
+
 **Historical import & ongoing Excel import** (`services/rework_import.py`,
 `import_rework_log.py`, Admin -> Import from Excel): the real workbook's
 `REWORK` sheet (12,343 rows back to Jan 2023) is fully imported --
@@ -552,17 +573,22 @@ row first since it's the primary key, rather than leaving both behind.
 
 Log of the turret machine's raw sheet stock -- separate from
 `rework_events` (which tracks finished-door rework/scrap, not raw
-material). Two sources of rows now: the historical import (scrap-only, see
-below) and the entry form (2026-10-21, see "Turret entry form" below),
+material). Two sources of rows now: the historical import (every row,
+production usage as well as scrap, see below) and the entry form (2026-10-21, see "Turret entry form" below),
 which can log a job with no scrap at all.
 
-**Historical import is still scrap-only**: Sheet1 of each source workbook is
+**Historical import now keeps production rows too** (2026-11-11, reverses
+the 2026-10-21 scrap-only decision): Sheet1 of each source workbook is
 really a job-sheet-usage tracker that *also* has scrap recorded against some
-rows, not a scrap log on its own -- most rows have no scrap at all, just
-which sheets a job used. The importer only ever cares about the scrap side
-(2026-10-21 decision), so it drops every row with nothing scrapped. This
-restriction is specific to `services/turret_import.py` -- it has nothing to
-do with what the entry form is allowed to save.
+rows -- most rows have no scrap at all, just which sheets a job used. Those
+~16,000 production rows (5,246 / 5,408 / 5,333 for 2024 / 2025 / 2026) used
+to be dropped; the department wants the production history, so every row
+with a valid date is imported now. Re-uploading a workbook that went in
+under the old rule is safe: its scrap rows hash the same and are skipped,
+only the production rows are added. Identical repeated rows within a file
+get a suffixed hash (first occurrence keeps the plain one), same rule as
+`services/rework_import.py`. The per-year counts below are the original
+scrap-only import, kept for the record.
 
 A row can have scrap recorded against more than one of its 3 sheet slots
 (A/B/C), each with its own date/sheet/qty -- a blank slot just means that
@@ -601,8 +627,9 @@ import fine with a NULL job_number.
 
 **Two tabs** (`.tab-bar`, same client-side pattern as the Admin page):
 
-- **Scrap log**: the raw per-job view above, with Month/Year/Type/Job
-  number filters.
+- **Turret log** (renamed from "Scrap log" 2026-11-11 -- it holds
+  production rows too now): the raw per-job view above, with Month/Year/
+  Type/Job number filters.
 - **Scrap write-off** (`services.turret.scrap_summary_by_week`): scrap
   grouped by write-off week and item, un-pivoting all 3 sheet slots into one
   series first so a job scrapping two different sheets isn't silently
@@ -700,10 +727,31 @@ server-side.
   `turret_events.scrap_cost` = the job's total across its reworks.
 - Scrap dates are still stamped once, preserved per (rework id, slot) --
   the form reloads after every save so each rework carries its real id.
-- `event_date` (shown read-only as "Date") is stamped server-side to NZ
-  today on create and never changed by `update_event` -- previously the
-  client sent `toISOString()` (UTC, so the day before for NZ mornings) and
-  every edit re-sent today's date, moving the entry date.
+- `event_date` ("Date") is **operator-editable** (2026-11-11): a date
+  input defaulting to NZ today, rendered server-side (never
+  `toISOString()`, which is UTC and gave the day before for NZ mornings).
+  `services.turret._event_date` refuses a future date; `update_event`
+  keeps the existing date if none is sent, and `week_num` always follows
+  `event_date`.
+
+**Works from the job number** (2026-11-11): Job number is required, SO
+number optional and auto-filled -- the roles swapped. The job field looks
+up `/api/jobs/<job>` (`erp_lookup.lookup_order_by_job`, same
+`synced_orders` cache and response shape as `/api/orders/<so>`;
+`normalize_job_number` pads `1117852` -> `J001117852`, and the server
+normalises the saved job number the same way). Typing an SO with the job
+still empty falls back to the SO lookup. Material 1 is no longer required
+-- a sheet that isn't on the BOM (design issue etc.) goes straight in
+Other.
+
+**Multi-day jobs** (2026-11-11): one entry per day, all sharing the job
+number -- no separate "days" table. Each day's usage then lands on its own
+date in Daily Usage, and each day can carry its own reworks. Once a job
+number resolves, the form shows any other days already logged for it
+(`/api/turret-events/by-job/<job>`, `turret.list_entries_for_job`) with
+links, so an operator logging day 2 knows day 1 exists rather than
+duplicating by accident; the edit page has "+ Log another day for this
+job" (`/turret/new?job=...`, prefilled + looked up).
 - Open (`open_status`) and Variation (`variation`) are dropdowns fed by
   `turret_open_options` / `turret_variations` -- Admin -> Turret Open /
   Turret Variations, the same named-table pattern as Work Centres/People
@@ -722,7 +770,8 @@ still a plain text column, no FK either way, just drawing its values from
 `rework_reasons.reason` now via `reference_data.list_reasons()` instead of
 a Turret-only source.
 
-**SO number auto-fill** (2026-10-22): entering an SO number looks up
+**SO number auto-fill** (2026-10-22; now keyed by job number, see "Works
+from the job number" above): entering an SO number looks up
 `/api/orders/<so>` -- the exact same endpoint and local `synced_orders`
 cache the Doors form already reads (`services/erp_lookup.py`), never
 SyteLine live -- and fills in Job Number, Colour, and Door Type. Door Type
@@ -1067,17 +1116,20 @@ cascade needed. The colour is real and shared, so disabling never touches
 
 `services/scheduled_sync.py` runs three ERP syncs (items, colours, orders) on
 their own fixed clock-time schedules -- a background thread
-(`start_background_thread`, started once from `app.py`) wakes every 30
-minutes and checks each one (`run_if_due` for items+colours, which share one
+(`start_background_thread`, started once from `app.py`) wakes every 5
+minutes (was 30 until hourly existed) and checks each one (`run_if_due` for items+colours, which share one
 schedule; `run_orders_sync_if_due` for orders, separate). A schedule is
-`{enabled, frequency: daily|weekly|monthly, time: "HH:MM", day_of_week: 0-6}`,
+`{enabled, frequency: hourly|daily|weekly|monthly, time: "HH:MM", day_of_week: 0-6}`
+(hourly is Orders-only -- `scheduled_sync.HOURLY_TASKS`, and only the
+orders-schedule endpoint accepts it; it runs at the time's minute past
+every hour),
 settings-table-backed (`erp_sync_*` / `orders_sync_*` keys). "Due" means the
 most recent scheduled clock-time (today's HH:MM for daily; this week's
 weekday+HH:MM for weekly) has passed since the last sync -- a real wall-clock
 time, not a rolling "N hours since last sync" window, since that's what the
 admin UI's time/day pickers actually promise. Monthly stays a simple ~30-day
-rolling check (no day-of-month picker -- not asked for). Checked only every
-30 minutes, so a scheduled time can run up to ~30 minutes late.
+rolling check (no day-of-month picker -- not asked for). Checked every 5
+minutes, so a scheduled time can run up to ~5 minutes late.
 
 Defaults: items/colours weekly, Monday 02:00; orders daily, 02:00 -- the
 entry form's SO lookup depends on the orders one directly (see "Sales Order

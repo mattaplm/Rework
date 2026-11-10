@@ -92,6 +92,7 @@
       <h2>Cost preview</h2>
       <div class="sumrow"><span>Qty to remove</span><strong id="sumQty">—</strong></div>
       <div class="sumrow"><span>Material cost</span><strong id="sumMaterial">—</strong></div>
+      <div class="sumrow"><span>PC cost</span><strong id="sumPc">—</strong></div>
       <div class="sumrow total"><span>Total</span><strong id="sumTotal">—</strong></div>
       <p class="hint">Calculated from the ERP item master once a product code is recognised.</p>
       <button type="submit" form="reworkForm" class="btn-primary" id="submitBtn">Log entry</button>
@@ -116,6 +117,10 @@
   var PEOPLE = {{ people|tojson }};
 
   var state = { soOrder: null, jobMaterials: null };
+  // Admin -> Cost: PC flightbar rate + Powder. Display only -- the server
+  // recomputes it on save.
+  var PC_COST = {{ pc_cost|tojson }};
+  var PC_TYPES = ["Rework / Recoat", "Replace Part"];
   // Bumped by resetForm() so a cost-preview/product-search fetch already in
   // flight when the form is cleared can't repopulate the item-match box or
   // product list after the fact -- each async callback checks its own
@@ -123,8 +128,8 @@
   var formGeneration = 0;
 
   var TYPE_HINTS = {
-    "Rework / Recoat": "Flat $132 rework charge, no material cost.",
-    "Replace Part": "Costed from the matched part’s ERP standard cost.",
+    "Rework / Recoat": "PC cost only (" + nzd(PC_COST) + " per rework), no material cost.",
+    "Replace Part": "Material from the matched part’s ERP standard cost, plus PC cost (" + nzd(PC_COST) + " per rework).",
     "Scrap Entire Door": "Whole door written off — product code is forced to DOOR."
   };
   var NEW_NAME_HINT = function (v) { return "New name — “" + v + "” will be added to the list when you log this entry."; };
@@ -545,20 +550,19 @@
   }
 
   function renderSummary() {
-    var firstRecoat = lines.findIndex(function (l) { return l.type === "Rework / Recoat"; });
-    var costs = lines.map(function (l, i) {
-      var p = l.preview;
-      if (!p || p.material_cost == null) return null;
-      // The flat Rework / Recoat charge is once per entry, not per material.
-      return l.type === "Rework / Recoat" && i !== firstRecoat ? 0 : p.material_cost;
-    });
-    var hasAny = costs.some(function (c) { return c != null; });
-    var total = costs.reduce(function (sum, c) { return sum + (c || 0); }, 0);
+    var materials = lines.map(function (l) { return l.preview ? l.preview.material_cost : null; });
+    var hasMaterial = materials.some(function (c) { return c != null; });
+    var material = materials.reduce(function (sum, c) { return sum + (c || 0); }, 0);
+    // PC cost is a one-off per rework, however many material lines it has.
+    var pc = lines.some(function (l) { return PC_TYPES.indexOf(l.type) !== -1; }) ? PC_COST : null;
+    var hasAny = hasMaterial || pc != null;
+    var total = material + (pc || 0);
+    document.getElementById("sumPc").textContent = pc != null ? nzd(pc) : "—";
     var qty = lines.length === 1 && lines[0].preview && lines[0].preview.qty_to_remove != null
       ? lines[0].preview.qty_to_remove
       : (lines.length > 1 ? "per material" : "—");
     document.getElementById("sumQty").textContent = qty;
-    document.getElementById("sumMaterial").textContent = hasAny ? nzd(total) : "—";
+    document.getElementById("sumMaterial").textContent = hasMaterial ? nzd(material) : "—";
     document.getElementById("sumTotal").textContent = hasAny ? nzd(total) : "—";
     document.getElementById("sumTotalMobile").textContent = hasAny ? nzd(total) : "—";
   }

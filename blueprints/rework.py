@@ -4,7 +4,7 @@ import logging
 
 from flask import Blueprint, jsonify, render_template, request
 
-from services import audit, erp_lookup, reference_data, test_data
+from services import admin_data, audit, erp_lookup, reference_data, test_data
 from services import rework as rework_service
 from services.auth import current_user, role_required
 
@@ -82,6 +82,7 @@ def new_page():
         work_centres=reference_data.list_work_centres(),
         colours=reference_data.list_colours(),
         people=reference_data.list_people(),
+        pc_cost=admin_data.pc_cost_per_rework(),
         test_so_number=test_data.SO_NUMBER,
     )
 
@@ -144,13 +145,15 @@ def api_cost_preview():
 
     basis = rework_service.resolve_piece_basis(payload)
     costs = compute_costs(payload.get("type", ""), quantity, item, full_door_cost,
-                          basis["job_material_qty"], basis["pieces_per_door"])
+                          basis["job_material_qty"], basis["pieces_per_door"],
+                          pc_rate=admin_data.pc_cost_per_rework())
     return jsonify({
         "piece_basis": basis,
         "matched": item is not None,
         "description": item["description"] if item else None,
         "qty_to_remove": costs.qty_to_remove,
         "material_cost": costs.material_cost,
+        "pc_cost": costs.pc_cost,
         "total_cost": costs.total_cost,
     })
 
@@ -170,4 +173,18 @@ def api_order_lookup(so_number: str):
         return jsonify({"ok": False, "error": str(exc)}), 502
     if not order:
         return jsonify({"ok": False, "error": "Sales order not found in the local cache. Try again after the next sync, or ask an admin to run one."}), 404
+    return jsonify({"ok": True, "order": order})
+
+
+@bp.route("/api/jobs/<path:job_number>")
+def api_job_lookup(job_number: str):
+    """Same as api_order_lookup, keyed by job number instead (the Turret
+    entry form works from the job). Same local cache, same response shape."""
+    try:
+        order = erp_lookup.lookup_order_by_job(job_number)
+    except Exception as exc:
+        logger.exception("Job lookup failed for %s", job_number)
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    if not order:
+        return jsonify({"ok": False, "error": "Job not found in the local order cache. Try again after the next sync, or ask an admin to run one."}), 404
     return jsonify({"ok": True, "order": order})

@@ -105,6 +105,8 @@ def _reworks_for_form(event: dict | None) -> list[dict]:
 
 def _form_context(event: dict | None) -> dict:
     return dict(
+        prefill_job=(request.args.get("job") or "").strip() if not event else "",
+        today=turret_service._today(),
         reworks=_reworks_for_form(event),
         active="turret_new",
         event=event,
@@ -133,6 +135,23 @@ def edit_page(event_id: int):
     if not event:
         abort(404)
     return render_template("turret_new.html", **_form_context(event))
+
+
+@bp.route("/api/turret-events/by-job/<path:job_number>")
+@role_required("operator")
+def api_entries_for_job(job_number: str):
+    """Entries already logged against a job -- the entry form's "this job
+    already has N day(s) logged" notice for multi-day jobs."""
+    try:
+        exclude = int(request.args.get("exclude") or 0)
+    except ValueError:
+        exclude = 0
+    rows = turret_service.list_entries_for_job(job_number, exclude)
+    return jsonify({"ok": True, "entries": [
+        {"id": r["id"], "date": r["event_date"].isoformat(), "label": r["event_date"].strftime("%a %d %b %Y"),
+         "sheets": [r[f"sheet_{s}"] for s in turret_service.SHEET_SLOTS if r[f"sheet_{s}"]]}
+        for r in rows
+    ]})
 
 
 @bp.route("/api/turret-events", methods=["POST"])

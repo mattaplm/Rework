@@ -8,15 +8,15 @@
     <div class="card">
       <h2>Job</h2>
       <div class="row3">
-        <div class="field" id="soField">
-          <label for="soNumber">SO number <span class="required-mark">*</span></label>
-          <input type="text" id="soNumber" placeholder="S000XXXXXX" autocomplete="off" value="{{ event.sales_number or '' }}">
-          <p class="hint" id="soStatus">Enter an SO number to auto-fill Job Number, Colour, and Door Type.</p>
+        <div class="field" id="jobNumberField">
+          <label for="jobNumber">Job number <span class="required-mark">*</span></label>
+          <input type="text" id="jobNumber" placeholder="J000XXXXXX" autocomplete="off" value="{{ (event.job_number or '') if event else prefill_job }}">
+          <p class="hint" id="jobStatus">Enter a job number to auto-fill SO Number, Colour, and Door Type.</p>
           <p class="field-error">Required.</p>
         </div>
-        <div class="field" id="jobNumberField">
-          <label for="jobNumber">Job number</label>
-          <input type="text" id="jobNumber" placeholder="J000XXXXXX" autocomplete="off" value="{{ event.job_number or '' }}">
+        <div class="field" id="soField">
+          <label for="soNumber">SO number <span class="optional">auto-filled</span></label>
+          <input type="text" id="soNumber" placeholder="S000XXXXXX" autocomplete="off" value="{{ event.sales_number or '' }}">
         </div>
         <div class="field" id="doorTypeField">
           <label for="doorType">Door type <span class="required-mark">*</span></label>
@@ -36,9 +36,10 @@
           </div>
           <p class="field-error">Select a colour from the list.</p>
         </div>
-        <div class="field">
-          <label>Date</label>
-          <div class="readonly-val" id="entryDate">{{ entry_date.strftime("%a %d %b %Y") }}</div>
+        <div class="field" id="entryDateField">
+          <label for="entryDate">Date <span class="required-mark">*</span></label>
+          <input type="date" id="entryDate" value="{{ entry_date.isoformat() }}" max="{{ today.isoformat() }}">
+          <p class="field-error" id="entryDateError">Pick a date, today or earlier.</p>
         </div>
       </div>
       <div class="row2">
@@ -59,6 +60,7 @@
           </select>
         </div>
       </div>
+      <div class="conn-banner" id="jobEntriesBanner" style="margin-bottom:12px;" hidden></div>
       <div class="field">
         <label for="notesInput">Notes <span class="optional">optional</span></label>
         <textarea id="notesInput" placeholder="e.g. machine jammed mid-cut">{{ event.comments or '' }}</textarea>
@@ -67,18 +69,17 @@
 
     <div class="card">
       <h2>Materials used</h2>
-      <p class="hint" id="materialsHint">Material 1/2 are scoped to this job's real BOM once an SO number resolves. Other always offers every raw sheet item.</p>
+      <p class="hint" id="materialsHint">Material 1/2 are scoped to this job's real BOM once the job number resolves. Other always offers every raw sheet item -- use it for a sheet that isn't on the BOM (Material 1 can be left empty).</p>
       {% for slot, label in [("a", "Material 1"), ("b", "Material 2"), ("c", "Other")] %}
       <div class="row2">
-        <div class="field" {% if slot == "a" %}id="sheetAField"{% endif %}>
-          <label for="sheet{{ slot|upper }}">{{ label }}{% if slot == 'a' %} <span class="required-mark">*</span>{% endif %}</label>
+        <div class="field">
+          <label for="sheet{{ slot|upper }}">{{ label }}</label>
           <select id="sheet{{ slot|upper }}">
-            <option value="">{{ "Select…" if slot == "a" else "None" }}</option>
+            <option value="">None</option>
             {% for s in sheet_items %}
             <option value="{{ s.part_number }}" {% if event and event["sheet_" + slot] == s.part_number %}selected{% endif %}>{{ s.part_number }} — {{ s.description }}</option>
             {% endfor %}
           </select>
-          {% if slot == "a" %}<p class="field-error">Required.</p>{% endif %}
         </div>
         <div class="field">
           <label for="qty{{ slot|upper }}">Quantity</label>
@@ -108,6 +109,10 @@
       <p class="hint" id="scrapCostHint">Estimated from each item's standard cost x quantity -- recalculated and saved for real once you save.</p>
       <p class="hint">{% if event %}Reopening entry #{{ event.id }} -- any field can be corrected, and reworks can be added, changed or removed.{% else %}Materials used today. Come back and reopen this entry later to add rework/scrap if it happens.{% endif %}</p>
       <button type="submit" form="turretForm" class="btn-primary" id="submitBtn">{{ "Save changes" if event else "Log entry" }}</button>
+      {% if event and event.job_number %}
+      <a class="btn-sm" style="display:block; text-align:center; margin-top:10px;" href="/turret/new?job={{ event.job_number|urlencode }}">+ Log another day for this job</a>
+      <p class="hint">For a job run across several days: each day is its own entry, with that day's date and materials.</p>
+      {% endif %}
     </div>
   </aside>
 </div>
@@ -151,8 +156,10 @@
     function (c) { colourInput.value = c; setFieldValid("colourField", true); });
 
   var soInput = document.getElementById("soNumber");
-  var soStatus = document.getElementById("soStatus");
   var jobNumberInput = document.getElementById("jobNumber");
+  var jobStatus = document.getElementById("jobStatus");
+  var JOB_HINT = "Enter a job number to auto-fill SO Number, Colour, and Door Type.";
+  var entryDateInput = document.getElementById("entryDate");
   var doorTypeSel = document.getElementById("doorType");
   var TEST_SO_NUMBER = {{ test_so_number|tojson }};
   var testOrderBanner = document.getElementById("testOrderBanner");
@@ -268,22 +275,47 @@
     rw.el.scrollIntoView({ behavior: "smooth", block: "nearest" });
   });
 
-  function lookupOrder() {
-    var so = soInput.value.trim();
-    if (!so) { soStatus.textContent = "Enter an SO number to auto-fill Job Number, Colour, and Door Type."; return; }
-    soStatus.textContent = "Looking up order…";
-    fetch("/api/orders/" + encodeURIComponent(so))
+  // The job number drives the lookup; the SO number is only looked up on
+  // its own if the job number is still empty (fallback, fills the job in).
+  function lookupOrder(by) {
+    var key = by === "so" ? soInput.value.trim() : jobNumberInput.value.trim();
+    if (!key) { if (by !== "so") { jobStatus.textContent = JOB_HINT; showJobEntries(null); } return; }
+    jobStatus.textContent = "Looking up " + (by === "so" ? "order" : "job") + "…";
+    fetch((by === "so" ? "/api/orders/" : "/api/jobs/") + encodeURIComponent(key))
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (res) {
         if (!res.ok || !res.data.ok) {
-          soStatus.textContent = (res.data && res.data.error) || "Order not found — you can still fill this in manually.";
+          jobStatus.textContent = (res.data && res.data.error) || "Not found — you can still fill this in manually.";
+          if (by !== "so") loadJobEntries(key);
           return;
         }
         applyOrder(res.data.order);
+        loadJobEntries(jobNumberInput.value.trim());
       })
       .catch(function () {
-        soStatus.textContent = "Couldn't reach the server to look up this order.";
+        jobStatus.textContent = "Couldn't reach the server to look up this job.";
       });
+  }
+
+  // ── Multi-day jobs: each day is its own entry under the same job number ──
+  var jobEntriesBanner = document.getElementById("jobEntriesBanner");
+  function showJobEntries(entries) {
+    if (!entries || !entries.length) { jobEntriesBanner.hidden = true; jobEntriesBanner.innerHTML = ""; return; }
+    var links = entries.map(function (e) {
+      return '<a href="/turret/' + e.id + '/edit">' + esc(e.label) + '</a>' +
+        (e.sheets.length ? " (" + esc(e.sheets.join(", ")) + ")" : "");
+    }).join(", ");
+    jobEntriesBanner.innerHTML = "<span>📅 This job already has " + entries.length + " other day" + (entries.length > 1 ? "s" : "") +
+      " logged: " + links + ". " + (EVENT_ID ? "This entry is a separate day." :
+      "Saving logs this as another day — open one of those instead to correct it.") + "</span>";
+    jobEntriesBanner.hidden = false;
+  }
+  function loadJobEntries(job) {
+    if (!job) { showJobEntries(null); return; }
+    fetch("/api/turret-events/by-job/" + encodeURIComponent(job) + (EVENT_ID ? "?exclude=" + EVENT_ID : ""))
+      .then(function (r) { return r.json(); })
+      .then(function (data) { showJobEntries(data.ok ? data.entries : null); })
+      .catch(function () { showJobEntries(null); });
   }
 
   function applyOrder(order) {
@@ -291,10 +323,10 @@
     updateTestBanner();
     var bomSheets = (order.materials || []).filter(function (m) { return SHEET_CODES.indexOf(m.part_number) !== -1; });
 
-    soStatus.textContent = "Loaded " + (order.job_number || "order")
+    jobStatus.textContent = "Loaded " + (order.job_number || "order") + (order.so_number ? " (" + order.so_number + ")" : "")
       + (bomSheets.length ? " — " + bomSheets.length + " sheet item(s) on the BOM" : " — no sheet items found on this job's BOM, showing the full list") + ".";
 
-    if (order.job_number) jobNumberInput.value = order.job_number;
+    if (order.job_number) { jobNumberInput.value = order.job_number; setFieldValid("jobNumberField", true); }
 
     var colourVal = order.colour_out || order.colour_in;
     if (colourVal) { colourInput.value = colourVal; setFieldValid("colourField", true); }
@@ -313,7 +345,7 @@
     }
 
     scopedSheets = bomSheets.length ? bomSheets : SHEET_ITEMS;
-    populateSheetSelect(document.getElementById("sheetA"), scopedSheets, bomSheets.length ? "Select from this job's BOM…" : "Select…");
+    populateSheetSelect(document.getElementById("sheetA"), scopedSheets, "None");
     populateSheetSelect(document.getElementById("sheetB"), scopedSheets, "None");
     reworks.forEach(function (rw) {
       rw.el.querySelectorAll('.rw-sheet[data-slot="0"], .rw-sheet[data-slot="1"]').forEach(function (sel) {
@@ -323,9 +355,13 @@
     recalcScrapCost();
   }
 
-  soInput.addEventListener("blur", lookupOrder);
+  jobNumberInput.addEventListener("blur", function () { lookupOrder("job"); });
+  jobNumberInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); lookupOrder("job"); }
+  });
+  soInput.addEventListener("blur", function () { if (!jobNumberInput.value.trim()) lookupOrder("so"); });
   soInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); lookupOrder(); }
+    if (e.key === "Enter") { e.preventDefault(); if (!jobNumberInput.value.trim()) lookupOrder("so"); }
   });
 
   // ── Scrap cost (live estimate only -- the server recomputes and stores the
@@ -346,16 +382,20 @@
 
   INITIAL_REWORKS.forEach(addRework);
   refreshReworks();
-  if (soInput.value.trim()) lookupOrder();
+  if (jobNumberInput.value.trim()) lookupOrder("job");
+  else if (soInput.value.trim()) lookupOrder("so");
 
   // ── Validation ──
   function setFieldValid(id, ok) { document.getElementById(id).classList.toggle("invalid", !ok); }
   function validate() {
     var ok = true;
-    if (!soInput.value.trim()) { setFieldValid("soField", false); ok = false; }
+    if (!jobNumberInput.value.trim()) { setFieldValid("jobNumberField", false); ok = false; }
     if (!doorTypeSel.value) { setFieldValid("doorTypeField", false); ok = false; }
     if (!colourInput.value.trim()) { setFieldValid("colourField", false); ok = false; }
-    if (!document.getElementById("sheetA").value) { setFieldValid("sheetAField", false); ok = false; }
+    var d = entryDateInput.value;
+    document.getElementById("entryDateError").textContent = "Pick a date, today or earlier.";
+    if (!d || d > entryDateInput.max) { setFieldValid("entryDateField", false); ok = false; }
+    else setFieldValid("entryDateField", true);
     return ok;
   }
 
@@ -381,6 +421,7 @@
     submitBtns.forEach(function (b) { b.disabled = true; });
 
     var payload = {
+      event_date: entryDateInput.value,
       sales_number: soInput.value.trim(),
       job_number: jobNumberInput.value.trim(),
       door_type: doorTypeSel.value,
@@ -411,6 +452,9 @@
       .then(function (res) {
         if (!res.ok) {
           submitBtns.forEach(function (b) { b.disabled = false; });
+          var errs = (res.data && res.data.errors) || {};
+          if (errs.event_date) { document.getElementById("entryDateError").textContent = errs.event_date; setFieldValid("entryDateField", false); }
+          if (errs.job_number) setFieldValid("jobNumberField", false);
           showToast("Couldn't save — check the highlighted fields.", true);
           return;
         }
@@ -430,11 +474,12 @@
     reworks.slice().forEach(function (rw) { rw.el.remove(); });
     reworks = [];
     refreshReworks();
-    ["soField", "doorTypeField", "colourField", "sheetAField"].forEach(function (id) { setFieldValid(id, true); });
+    ["jobNumberField", "doorTypeField", "colourField", "entryDateField"].forEach(function (id) { setFieldValid(id, true); });
+    showJobEntries(null);
     // form.reset() doesn't fire "input" events, so the TEST banner and SO
     // status line need refreshing by hand.
     updateTestBanner();
-    soStatus.textContent = "Enter an SO number to auto-fill Job Number, Colour, and Door Type.";
+    jobStatus.textContent = JOB_HINT;
   });
 })();
 </script>

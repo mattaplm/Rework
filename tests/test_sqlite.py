@@ -66,7 +66,8 @@ def test_entries_reporting_search_and_iso_writeoffs(sqlite_store):
         cur.execute("UPDATE rework_events SET entered_date = %s WHERE id = %s", (date(2025, 12, 31), event["id"]))
     assert len(rework.list_events(filters={"year": "2025", "month": "12", "so_number": "so123"})) == 1
     assert reference_data.search_items("door")[0]["part_number"] == "PART"
-    assert reporting.summary(None)["total_cost"] == 75
+    assert event["pc_cost"] == 92  # $72 flightbar + $20 powder, Admin -> Cost defaults
+    assert reporting.summary(None)["total_cost"] == 75 + 92
     assert reporting.summary(1)["total_entries"] == 0
     assert reporting.weekly_trend(None)[0]["week_start"] == "2025-12-29"
     assert reporting.top_reasons(days=None)[0]["reason"] == "DAMAGE"
@@ -83,7 +84,8 @@ def test_entries_reporting_search_and_iso_writeoffs(sqlite_store):
 
 
 def _turret_job(**extra):
-    return {**dict(sales_number="SO1", door_type="Axis", colour="Black", sheet_a="SHEET", qty_a=1), **extra}
+    return {**dict(job_number="J1", sales_number="SO1", door_type="Axis", colour="Black", sheet_a="SHEET", qty_a=1),
+            **extra}
 
 
 def _rework(sheet="SHEET", qty=2, rework_id=None, rework_type="Replacement Parts"):
@@ -93,9 +95,10 @@ def _rework(sheet="SHEET", qty=2, rework_id=None, rework_type="Replacement Parts
 
 def test_turret_edit_and_writeoff_week_arrays(sqlite_store, monkeypatch):
     monkeypatch.setattr(turret, "_today", lambda: date(2025, 12, 31))
-    event_id = turret.create_event(_turret_job(event_date="2020-01-01"), 1)
+    event_id = turret.create_event(_turret_job(), 1)
     event = turret.get_event(event_id)
-    assert event["event_date"] == date(2025, 12, 31)  # stamped server-side, client value ignored
+    assert event["event_date"] == date(2025, 12, 31)  # blank date defaults to today
+    assert event["job_number"] == "J000000001"  # normalised like an SO number
     assert event["reworks"] == []
 
     turret.update_event(event_id, _turret_job(reworks=[_rework()]))
@@ -113,6 +116,78 @@ def test_turret_edit_and_writeoff_week_arrays(sqlite_store, monkeypatch):
     assert rows[0]["total_qty"] == 2
     assert turret.list_available_scrap_weeks() == [{"write_off_year": 2026, "write_off_week": 2}]
     assert len(turret.list_events(filters={"year": "2025", "month": "12"})) == 1
+
+
+def test_turret_editable_date_job_required_and_multi_day(sqlite_store, monkeypatch):
+    monkeypatch.setattr(turret, "_today", lambda: date(2026, 11, 11))
+    with pytest.raises(turret.ValidationError) as err:
+        turret.create_event(_turret_job(job_number=""), 1)
+    assert "job_number" in err.value.errors
+    with pytest.raises(turret.ValidationError) as err:
+        turret.create_event(_turret_job(event_date="2026-11-12"), 1)
+    assert "event_date" in err.value.errors
+    # SO number and Material 1 are both optional now -- an off-BOM sheet goes in Other.
+    day1 = turret.create_event(_turret_job(sales_number="", sheet_a="", qty_a=None, sheet_c="SHEET", qty_c=2,
+                                           event_date="2026-11-09"), 1)
+    event = turret.get_event(day1)
+    assert event["event_date"] == date(2026, 11, 9) and event["week_num"] == 46
+    assert event["sales_number"] is None and event["sheet_a"] is None
+    day2 = turret.create_event(_turret_job(job_number="j1", event_date="2026-11-10"), 1)
+    assert [r["id"] for r in turret.list_entries_for_job("1117852")] == []
+    assert [r["id"] for r in turret.list_entries_for_job("J000000001")] == [day1, day2]
+    assert [r["id"] for r in turret.list_entries_for_job("J1", exclude_id=day2)] == [day1]
+    # Correcting the date moves week_num with it; leaving it out keeps it.
+    turret.update_event(day1, _turret_job(event_date="2026-11-02"))
+    assert (turret.get_event(day1)["event_date"], turret.get_event(day1)["week_num"]) == (date(2026, 11, 2), 45)
+    turret.update_event(day1, _turret_job())
+    assert turret.get_event(day1)["event_date"] == date(2026, 11, 2)
+    usage = turret.daily_usage(date(2026, 11, 10), date(2026, 11, 10))
+    assert usage[0]["used"] == 1.0 and usage[0]["jobs"] == 1  # only day 2's usage on day 2
+
+
+def test_job_number_lookup_and_hourly_schedule(sqlite_store):
+    from datetime import datetime
+    from services import erp_lookup
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO synced_orders (so_number, job_number) VALUES ('S000567191', 'J001117852')")
+    assert erp_lookup.normalize_job_number(" j1117852 ") == "J001117852"
+    assert erp_lookup.normalize_job_number("REWORKS") == "REWORKS"
+    assert erp_lookup.lookup_order_by_job("1117852")["so_number"] == "S000567191"
+    assert erp_lookup.lookup_order_by_job("J999") is None
+    now = datetime(2026, 11, 11, 14, 10)
+    assert scheduled_sync._most_recent_due(now, "hourly", "02:15", 0) == datetime(2026, 11, 11, 13, 15)
+    assert scheduled_sync._most_recent_due(now, "hourly", "00:05", 0) == datetime(2026, 11, 11, 14, 5)
+    scheduled_sync.set_orders_schedule(True, "hourly", "00:00", 0)
+    assert scheduled_sync.get_orders_schedule()["frequency"] == "hourly"
+
+
+def test_turret_import_keeps_production_rows_and_repeats(sqlite_store):
+    from services import turret_import
+    path = sqlite_store / "turret.xlsx"
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Sheet1"
+    sheet.append(["header"] * 30)
+    def row(job, scrap=None):
+        r = [None] * 30
+        r[turret_import.COL["date"]] = date(2025, 5, 6)
+        r[turret_import.COL["job_number"]] = job
+        r[turret_import.COL["sheet_a"]] = "SHEET"
+        r[turret_import.COL["qty_a_ordered"]] = 2
+        if scrap:
+            r[turret_import.COL["scrap_date_a"]] = date(2025, 5, 7)
+            r[turret_import.COL["scrap_sheet_a"]] = "SHEET"
+            r[turret_import.COL["scrap_qty_a"]] = scrap
+        return r
+    for r in (row("J1", scrap=1), row("J2"), row("J2"), [None] * 30):
+        sheet.append(r)
+    book.save(path)
+    book.close()
+    result = turret_import.import_workbook(str(path))
+    assert (result.inserted, result.skipped_invalid) == (3, 0)  # production rows + both identical repeats
+    again = turret_import.import_workbook(str(path))
+    assert (again.inserted, again.skipped_duplicate) == (0, 3)
+    assert turret.daily_usage(date(2025, 5, 6), date(2025, 5, 6))[0]["used"] == 6.0
 
 
 def test_turret_multiple_reworks_options_and_usage(sqlite_store, monkeypatch):
@@ -245,15 +320,22 @@ def test_http_login_pin_change_and_all_pages(sqlite_store, monkeypatch):
     assert posted.status_code == 200
     assert posted.get_json()["event"]["entered_by_name"] == "Gary"  # matched/created case-insensitively
     assert client.get("/rework").status_code == 200
-    turret_job = {"sales_number": "SO1", "door_type": "Axis", "colour": "Black", "sheet_a": "SHEET", "qty_a": 1,
+    turret_job = {"job_number": "J1", "event_date": "2026-01-02", "sales_number": "SO1", "door_type": "Axis", "colour": "Black", "sheet_a": "SHEET", "qty_a": 1,
                   "open_status": "RH IN", "reworks": [{"rework_type": "Replacement Parts", "reason": "DAMAGE",
                                                        "materials": [{"sheet": "SHEET", "qty": 1}]}]}
     created = client.post("/api/turret-events", json=turret_job)
     assert created.status_code == 200
     turret_id = created.get_json()["id"]
     assert client.get(f"/turret/{turret_id}/edit").status_code == 200
+    assert client.get("/turret/new?job=J000000001").status_code == 200
+    assert client.get("/api/turret-events/by-job/J1").get_json()["entries"][0]["id"] == turret_id
+    assert client.get("/api/jobs/J1").status_code == 404
     assert client.post(f"/api/turret-events/{turret_id}", json=turret_job).status_code == 200
     assert client.post("/api/admin/turret_variations", json={"name": "Test variation"}).status_code == 200
+    assert client.post("/api/admin/cost-rates", json={"cost_pc_flightbar_rate": 75}).status_code == 200
+    assert client.post("/api/admin/cost-rates", json={"cost_powder": "x"}).status_code == 400
+    assert "$75.00" not in client.get("/admin").get_data(as_text=True)  # value shown, default column stays $72.00
+    assert 'value="75.00"' in client.get("/admin").get_data(as_text=True)
     assert client.post("/logout").status_code == 302
     assert client.get("/api/users").status_code == 401
 
@@ -287,4 +369,26 @@ def test_online_backup_restores_entries_and_survives_restart(sqlite_store, monke
     monkeypatch.setenv("SQLITE_PATH", str(backup))
     db.init_db()
     assert [row["id"] for row in rework.list_events()] == [original["id"]]
-    assert reporting.summary(None)["total_cost"] == 75
+    assert reporting.summary(None)["total_cost"] == 75 + 92  # material + PC cost
+
+
+def test_pc_cost_once_per_entry_from_admin_rates(sqlite_store):
+    admin_data.set_cost_rates({"cost_pc_flightbar_rate": 70, "cost_powder": 25})
+    base = {k: v for k, v in payload().items() if k not in ("product_code", "quantity", "type")}
+    events = rework.create_events({**base, "person": "Gary", "materials": [
+        {"product_code": "PART", "quantity": 1, "type": "Rework / Recoat"},
+        {"product_code": "PART", "quantity": 2, "type": "Replace Part"},
+    ]}, 1)
+    assert [(e["material_cost"], e["pc_cost"]) for e in events] == [(None, 95), (50, None)]
+
+
+def test_cost_rates_defaults_save_and_validation(sqlite_store):
+    assert {r["key"]: r["value"] for r in admin_data.get_cost_rates()} == {
+        "cost_pc_flightbar_rate": 72.0, "cost_powder": 20.0}
+    admin_data.set_cost_rates({"cost_powder": "22.5", "unknown": "1"})
+    assert admin_data.get_cost_rate("cost_powder") == 22.5
+    assert admin_data.get_cost_rate("cost_pc_flightbar_rate") == 72.0  # untouched
+    for bad in ("abc", "-1", None):
+        with pytest.raises(ValueError):
+            admin_data.set_cost_rates({"cost_pc_flightbar_rate": bad})
+    assert admin_data.get_cost_rate("cost_pc_flightbar_rate") == 72.0

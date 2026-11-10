@@ -1,10 +1,21 @@
 from services.costing import compute_costs
 
 
-def test_rework_recoat_is_flat_fee_regardless_of_item():
-    result = compute_costs("Rework / Recoat", 3, item=None)
-    assert result.material_cost == 132
-    assert result.qty_to_remove is None
+def test_rework_recoat_is_pc_cost_only_regardless_of_item_or_qty():
+    result = compute_costs("Rework / Recoat", 3, item={"rule": 1, "std_cost": 10}, pc_rate=92)
+    assert result.material_cost is None
+    assert result.pc_cost == 92 and result.total_cost == 92
+
+
+def test_replace_part_itemises_material_and_pc_cost():
+    result = compute_costs("Replace Part", 3, item={"rule": 2, "std_cost": 10}, pc_rate=92)
+    assert (result.material_cost, result.pc_cost, result.total_cost) == (60, 92, 152)
+    # No PC rate passed (a later line of the same entry) -> no PC cost.
+    assert compute_costs("Replace Part", 3, item={"rule": 2, "std_cost": 10}).pc_cost is None
+
+
+def test_scrap_entire_door_has_no_pc_cost():
+    assert compute_costs("Scrap Entire Door", 1, item=None, full_door_material_cost=500, pc_rate=92).pc_cost is None
 
 
 def test_replace_part_uses_std_cost_times_qty_to_remove():

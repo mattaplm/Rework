@@ -28,7 +28,6 @@ if __name__ == "__main__":
 
     print(f"Inserted:           {result.inserted}")
     print(f"Already imported:   {result.skipped_duplicate}")
-    print(f"Skipped (no scrap): {result.skipped_not_scrap}")
     print(f"Skipped (invalid):  {result.skipped_invalid}")
     if result.invalid_examples:
         print("Examples of skipped rows (date, week, type, sales_number, job_number):")

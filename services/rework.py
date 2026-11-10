@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 
 import db
-from services import erp_lookup, erp_reconciliation, reference_data, test_data
-from services.costing import COMPONENTS, compute_costs
+from services import admin_data, erp_lookup, erp_reconciliation, reference_data, test_data
+from services.costing import COMPONENTS, PC_COST_TYPES, compute_costs
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def resolve_piece_basis(payload: dict) -> dict:
     return out
 
 
-def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -> dict:
+def create_event(payload: dict, user_id: int | None, charge_pc: bool = True) -> dict:
     _validate(payload)
 
     item = reference_data.get_item(payload["product_code"])
@@ -130,10 +130,10 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
     basis = resolve_piece_basis(payload)
     if basis["error"]:
         raise ValidationError({"quantity": basis["error"]})
+    # PC cost is once per entry, not per material line -- see create_events.
     costs = compute_costs(payload["type"], quantity, item, full_door_cost,
-                          basis["job_material_qty"], basis["pieces_per_door"])
-    if payload["type"] == "Rework / Recoat" and not charge_flat:
-        costs.material_cost = 0.0  # the flat recoat charge is per entry, not per material line
+                          basis["job_material_qty"], basis["pieces_per_door"],
+                          pc_rate=admin_data.pc_cost_per_rework() if charge_pc else None)
 
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -141,12 +141,12 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
             INSERT INTO rework_events (
                 rework_date, due_date, type, so_number, product_code, quantity,
                 height_mm, width_mm, cut_length_mm,
-                qty_to_remove, material_cost, component,
+                qty_to_remove, material_cost, pc_cost, component,
                 reason, source, colour, door_type, work_centre, notes, entered_by_user_id, entered_by_name
             ) VALUES (
                 %(rework_date)s, %(due_date)s, %(type)s, %(so_number)s, %(product_code)s, %(quantity)s,
                 %(height_mm)s, %(width_mm)s, %(cut_length_mm)s,
-                %(qty_to_remove)s, %(material_cost)s, %(component)s,
+                %(qty_to_remove)s, %(material_cost)s, %(pc_cost)s, %(component)s,
                 %(reason)s, %(source)s, %(colour)s, %(door_type)s, %(work_centre)s, %(notes)s, %(entered_by_user_id)s, %(entered_by_name)s
             ) RETURNING *
             """,
@@ -162,6 +162,7 @@ def create_event(payload: dict, user_id: int | None, charge_flat: bool = True) -
                 "cut_length_mm": _optional_float(payload, "cut_length_mm"),
                 "qty_to_remove": costs.qty_to_remove,
                 "material_cost": costs.material_cost,
+                "pc_cost": costs.pc_cost,
                 "component": basis["component"],
                 "reason": payload["reason"],
                 "source": reason["source"] if reason else None,
@@ -218,9 +219,9 @@ def create_events(payload: dict, user_id: int | None) -> list[dict]:
 
     for line in merged:
         line["person"] = reference_data.resolve_person(line["person"])  # one spelling per person; adds a new name to the list
-    # The flat recoat charge is once per entry: only the first Rework / Recoat line pays it.
-    first_recoat = next((i for i, m in enumerate(merged) if m["type"] == "Rework / Recoat"), None)
-    return [create_event(line, user_id, charge_flat=(i == first_recoat)) for i, line in enumerate(merged)]
+    # PC cost is a one-off per rework: only the first Rework / Recoat or Replace Part line pays it.
+    first_pc = next((i for i, m in enumerate(merged) if m["type"] in PC_COST_TYPES), None)
+    return [create_event(line, user_id, charge_pc=(i == first_pc)) for i, line in enumerate(merged)]
 
 
 def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) -> list[dict]:

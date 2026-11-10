@@ -23,7 +23,7 @@ def summary(days: int | None = 90) -> dict:
             f"""
             SELECT
                 COUNT(*) AS total_entries,
-                CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost,
+                CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(pc_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost,
                 COUNT(*) FILTER (WHERE type = 'Rework / Recoat') AS rework_count,
                 COUNT(*) FILTER (WHERE type = 'Replace Part') AS replace_count,
                 COUNT(*) FILTER (WHERE type = 'Scrap Entire Door') AS scrap_count
@@ -42,7 +42,7 @@ def weekly_trend(weeks: int | None = 12) -> list[dict]:
             f"""
             SELECT {db.week_start('rework_date')} AS week_start,
                    COUNT(*) AS entries,
-                   CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost
+                   CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(pc_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost
             FROM rework_events
             {where}
             GROUP BY 1 ORDER BY 1
@@ -58,7 +58,7 @@ def top_reasons(limit: int = 8, days: int | None = 90) -> list[dict]:
         cur.execute(
             f"""
             SELECT reason, COUNT(*) AS entries,
-                   CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost
+                   CAST((COALESCE(SUM(material_cost), 0) + COALESCE(SUM(pc_cost), 0) + COALESCE(SUM(labour_cost), 0)) AS DOUBLE PRECISION) AS total_cost
             FROM rework_events
             {where}
             GROUP BY reason ORDER BY entries DESC LIMIT %(limit)s
