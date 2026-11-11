@@ -14,8 +14,9 @@ def test_replace_part_itemises_material_and_pc_cost():
     assert compute_costs("Replace Part", 3, item={"rule": 2, "std_cost": 10}).pc_cost is None
 
 
-def test_scrap_entire_door_has_no_pc_cost():
-    assert compute_costs("Scrap Entire Door", 1, item=None, full_door_material_cost=500, pc_rate=92).pc_cost is None
+def test_scrap_entire_door_adds_pc_cost_to_full_door_material():
+    result = compute_costs("Scrap Entire Door", 1, item=None, full_door_material_cost=500, pc_rate=92)
+    assert (result.material_cost, result.pc_cost, result.total_cost) == (500, 92, 592)
 
 
 def test_replace_part_uses_std_cost_times_qty_to_remove():

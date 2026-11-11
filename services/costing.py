@@ -9,8 +9,8 @@ Original formulas (M column of the `Rework` table):
                     else  XLOOKUP(Product Code, SL_Items, Std Cost) * QTY TO REMOVE
 
 PC (powder-coat) cost replaces that flat 132 (2026-11-11): `pc_rate` (Admin
--> Cost: PC flightbar rate + Powder, default $72 + $20) is charged on Rework /
-Recoat and Replace Part, itemised separately from material cost. Rework /
+-> Cost: PC flightbar rate + Powder, default $72 + $20) is charged on every type --
+Rework / Recoat, Replace Part and Scrap Entire Door (2026-11-12) -- itemised separately from material cost. Rework /
 Recoat has no material cost of its own now. It's a one-off per rework, not
 x quantity -- and once per *entry* across its material lines, which the
 caller (services.rework.create_events) handles by passing pc_rate=None for
@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-PC_COST_TYPES = ("Rework / Recoat", "Replace Part")
+PC_COST_TYPES = ("Rework / Recoat", "Replace Part", "Scrap Entire Door")
 
 
 COMPONENTS = ("Stile", "Rail")

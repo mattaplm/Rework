@@ -120,7 +120,7 @@
   // Admin -> Cost: PC flightbar rate + Powder. Display only -- the server
   // recomputes it on save.
   var PC_COST = {{ pc_cost|tojson }};
-  var PC_TYPES = ["Rework / Recoat", "Replace Part"];
+  var PC_TYPES = ["Rework / Recoat", "Replace Part", "Scrap Entire Door"];
   // Bumped by resetForm() so a cost-preview/product-search fetch already in
   // flight when the form is cleared can't repopulate the item-match box or
   // product list after the fact -- each async callback checks its own
@@ -130,7 +130,7 @@
   var TYPE_HINTS = {
     "Rework / Recoat": "PC cost only (" + nzd(PC_COST) + " per rework), no material cost.",
     "Replace Part": "Material from the matched part’s ERP standard cost, plus PC cost (" + nzd(PC_COST) + " per rework).",
-    "Scrap Entire Door": "Whole door written off — product code is forced to DOOR."
+    "Scrap Entire Door": "Whole door written off — product code is forced to DOOR. Job’s full material cost, plus PC cost (" + nzd(PC_COST) + ")."
   };
   var NEW_NAME_HINT = function (v) { return "New name — “" + v + "” will be added to the list when you log this entry."; };
 

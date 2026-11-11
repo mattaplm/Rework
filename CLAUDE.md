@@ -395,12 +395,13 @@ new rate to `admin_data.COST_RATES` and the tab picks it up.
 **PC (powder-coat) cost on Doors entries** (2026-11-11, migration `0020` /
 sqlite `0007` adds `rework_events.pc_cost`): `admin_data.
 pc_cost_per_rework()` = flightbar rate + powder ($92 at defaults), charged
-on Rework / Recoat and Replace Part, **once per entry** (the first such
+on Rework / Recoat, Replace Part and Scrap Entire Door, **once per entry** (the first such
 material line pays it, later lines get NULL -- `rework.create_events`),
 never x quantity. Itemised separately: Replace Part keeps its material
 cost plus PC cost; Rework / Recoat is PC cost only (material NULL) --
 this **replaces the old flat $132** (`REWORK_RECOAT_FLAT_COST`, gone).
-Scrap Entire Door has no PC cost. Historical rows keep their own
+Scrap Entire Door gets the job's full material cost plus PC cost
+(added 2026-11-12; it originally had none). Historical rows keep their own
 material_cost ($132s included) and NULL pc_cost. Dashboard totals add
 `pc_cost` in; the log has a PC column; the entry form's summary shows
 Material / PC / Total.
