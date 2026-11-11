@@ -377,8 +377,9 @@
   <div class="card">
     <h2>Cost rates</h2>
     <p class="hint">Doors' PC (powder-coat) cost: flightbar rate + powder, currently
-      <strong>${{ '%.2f'|format(cost_rates|sum(attribute='value')) }}</strong>, charged once per rework entry on
-      Rework / Recoat, Replace Part and Scrap Entire Door (itemised separately from material cost).</p>
+      <strong>${{ '%.2f'|format(cost_rates|sum(attribute='value')) }}</strong>, charged on Rework / Recoat, Replace Part and Scrap Entire Door
+      (itemised separately from material cost): the first material of an entry pays it, and each further
+      Replace Part material adds another, up to 2 per entry.</p>
     <form id="formCostRates" novalidate>
       <table class="admin-table" style="max-width:520px;">
         <thead><tr><th>Rate</th><th>Value ($)</th><th>Default</th></tr></thead>

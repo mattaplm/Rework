@@ -1,4 +1,13 @@
-from services.costing import compute_costs
+from services.costing import compute_costs, pc_charged_lines
+
+
+def test_pc_charged_lines_first_plus_replace_parts_max_two():
+    R, P = "Rework / Recoat", "Replace Part"
+    assert pc_charged_lines([R]) == [True]
+    assert pc_charged_lines([R, P]) == [True, True]
+    assert pc_charged_lines([P, R]) == [True, False]
+    assert pc_charged_lines([R, R, P]) == [True, False, True]
+    assert pc_charged_lines([P, P, P]) == [True, True, False]
 
 
 def test_rework_recoat_is_pc_cost_only_regardless_of_item_or_qty():

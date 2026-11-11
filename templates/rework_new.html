@@ -553,8 +553,13 @@
     var materials = lines.map(function (l) { return l.preview ? l.preview.material_cost : null; });
     var hasMaterial = materials.some(function (c) { return c != null; });
     var material = materials.reduce(function (sum, c) { return sum + (c || 0); }, 0);
-    // PC cost is a one-off per rework, however many material lines it has.
-    var pc = lines.some(function (l) { return PC_TYPES.indexOf(l.type) !== -1; }) ? PC_COST : null;
+    // PC cost: the first material pays it, each later Replace Part adds
+    // another, max 2 per entry -- same rule as services.costing.pc_charged_lines.
+    var pcCharges = 0;
+    lines.forEach(function (l) {
+      if (PC_TYPES.indexOf(l.type) !== -1 && pcCharges < 2 && (pcCharges === 0 || l.type === "Replace Part")) pcCharges++;
+    });
+    var pc = pcCharges ? PC_COST * pcCharges : null;
     var hasAny = hasMaterial || pc != null;
     var total = material + (pc || 0);
     document.getElementById("sumPc").textContent = pc != null ? nzd(pc) : "—";

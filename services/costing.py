@@ -11,10 +11,10 @@ Original formulas (M column of the `Rework` table):
 PC (powder-coat) cost replaces that flat 132 (2026-11-11): `pc_rate` (Admin
 -> Cost: PC flightbar rate + Powder, default $72 + $20) is charged on every type --
 Rework / Recoat, Replace Part and Scrap Entire Door (2026-11-12) -- itemised separately from material cost. Rework /
-Recoat has no material cost of its own now. It's a one-off per rework, not
-x quantity -- and once per *entry* across its material lines, which the
-caller (services.rework.create_events) handles by passing pc_rate=None for
-every line after the first chargeable one.
+Recoat has no material cost of its own now. It's never x quantity. Per entry:
+the first line pays it, each later Replace Part line adds another, max 2
+(pc_charged_lines); services.rework.create_events passes pc_rate=None for
+the lines that don't pay.
 
 Labour cost (the old sheet's "Cost 2" column, from per-part picking/cutting/
 machining/assembly rates) is deliberately not computed here -- not in use for
@@ -36,6 +36,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 PC_COST_TYPES = ("Rework / Recoat", "Replace Part", "Scrap Entire Door")
+MAX_PC_CHARGES = 2  # per entry
+
+
+def pc_charged_lines(types: list[str]) -> list[bool]:
+    """Which material lines of one entry carry a PC cost (2026-11-12): the
+    first chargeable line always does; after that only a Replace Part line
+    adds another, up to MAX_PC_CHARGES per entry. A later Rework / Recoat
+    line shares the PC cost already charged. Mirrored by the entry form's
+    live summary (templates/rework_new.html, pcCharges)."""
+    charged, out = 0, []
+    for t in types:
+        pays = t in PC_COST_TYPES and charged < MAX_PC_CHARGES and (charged == 0 or t == "Replace Part")
+        charged += pays
+        out.append(pays)
+    return out
 
 
 COMPONENTS = ("Stile", "Rail")

@@ -378,8 +378,9 @@ def test_pc_cost_once_per_entry_from_admin_rates(sqlite_store):
     events = rework.create_events({**base, "person": "Gary", "materials": [
         {"product_code": "PART", "quantity": 1, "type": "Rework / Recoat"},
         {"product_code": "PART", "quantity": 2, "type": "Replace Part"},
+        {"product_code": "PART", "quantity": 1, "type": "Replace Part"},
     ]}, 1)
-    assert [(e["material_cost"], e["pc_cost"]) for e in events] == [(None, 95), (50, None)]
+    assert [(e["material_cost"], e["pc_cost"]) for e in events] == [(None, 95), (50, 95), (25, None)]
 
 
 def test_cost_rates_defaults_save_and_validation(sqlite_store):

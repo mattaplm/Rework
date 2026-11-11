@@ -16,7 +16,7 @@ import logging
 import db
 import queries
 from services import admin_data, erp_lookup, erp_reconciliation, reference_data, test_data
-from services.costing import COMPONENTS, PC_COST_TYPES, compute_costs
+from services.costing import COMPONENTS, compute_costs, pc_charged_lines
 
 logger = logging.getLogger(__name__)
 
@@ -220,9 +220,9 @@ def create_events(payload: dict, user_id: int | None) -> list[dict]:
 
     for line in merged:
         line["person"] = reference_data.resolve_person(line["person"])  # one spelling per person; adds a new name to the list
-    # PC cost is a one-off per rework: only the first Rework / Recoat or Replace Part line pays it.
-    first_pc = next((i for i, m in enumerate(merged) if m["type"] in PC_COST_TYPES), None)
-    return [create_event(line, user_id, charge_pc=(i == first_pc)) for i, line in enumerate(merged)]
+    # PC cost: first line, plus each later Replace Part, max 2 per entry.
+    charges = pc_charged_lines([m["type"] for m in merged])
+    return [create_event(line, user_id, charge_pc=pays) for line, pays in zip(merged, charges)]
 
 
 def list_events(limit: int = 100, offset: int = 0, filters: dict | None = None) -> list[dict]:
