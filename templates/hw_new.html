@@ -38,17 +38,22 @@
     </div>
 
     <div class="card">
-      <h2>Order <span class="optional">optional</span></h2>
+      <h2>Order <span class="optional">optional — start with the job number</span></h2>
       <div class="row2">
         <div class="field">
-          <label for="soNumber">SO number</label>
-          <input type="text" id="soNumber" autocomplete="off" placeholder="e.g. 495453">
+          <label for="jobNumber">Job number</label>
+          <input type="text" id="jobNumber" autocomplete="off" placeholder="J00… or just the digits">
         </div>
         <div class="field">
-          <label for="jobNumber">Job number</label>
-          <input type="text" id="jobNumber" autocomplete="off" placeholder="J00…">
+          <label for="soNumber">SO number <span class="optional">auto-filled</span></label>
+          <input type="text" id="soNumber" autocomplete="off" placeholder="S000…">
         </div>
       </div>
+      <div class="field" id="soLineField" hidden>
+        <label for="soLine">Which line on this SO?</label>
+        <select id="soLine"></select>
+      </div>
+      <p class="hint" id="orderStatus">Enter a job number to fill in the SO and colour from SyteLine, and narrow the Part list to that job's parts.</p>
     </div>
 
     <div class="card">
@@ -189,7 +194,7 @@
     function (r) { return r.is_scrap ? "Scrap" : "Rework"; },
     function (r) { $("reasonInput").value = r.reason; render(); });
 
-  makeCombo($("partInput"), $("partList"), PARTS,
+  var partCombo = makeCombo($("partInput"), $("partList"), PARTS,
     function (p) { return p.part_number; },
     function (p) { return [p.product_code, p.material, p.unit_cost != null ? nzd(p.unit_cost) : null].filter(Boolean).join(" · "); },
     function (p) { $("partInput").value = p.part_number; render(); });
@@ -198,6 +203,88 @@
     function (c) { return c.colour; },
     function (c) { return c.code || ""; },
     function (c) { $("colourInput").value = c.colour; $("colourCode").value = c.code || ""; render(); });
+
+  // ── SyteLine order lookup (local cache; see /api/hardware/lookup) ──
+  var orderState = { line: null, autoColour: null, jobParts: null, lines: [] };
+
+  function scopeParts(line) {
+    var wanted = line ? line.materials : [];
+    var scoped = PARTS.filter(function (p) { return wanted.indexOf(p.part_number.toUpperCase()) !== -1; });
+    orderState.jobParts = scoped.length ? scoped : null;
+    partCombo.refresh(orderState.jobParts || PARTS);
+    return scoped.length;
+  }
+
+  function describe(line) {
+    return [line.so_number + " line " + line.co_line, line.job_number, line.item, line.description].filter(Boolean).join(" · ");
+  }
+
+  function applyLine(line, fillFields) {
+    orderState.line = line;
+    var n = scopeParts(line);
+    if (fillFields) {
+      $("jobNumber").value = line.job_number || $("jobNumber").value;
+      $("soNumber").value = line.so_number || $("soNumber").value;
+      var colourUntouched = !$("colourInput").value.trim() || $("colourInput").value === orderState.autoColour;
+      if (line.colour && colourUntouched) {
+        $("colourInput").value = line.colour;
+        $("colourCode").value = line.colour_code || "";
+        orderState.autoColour = line.colour;
+      }
+    }
+    $("orderStatus").textContent = describe(line) + (n
+      ? " — Part list narrowed to this job's " + n + " part" + (n === 1 ? "" : "s") + " (clear the job number to see all)."
+      : " — none of this job's materials are in the parts list, so every part is offered.");
+    render();
+  }
+
+  function clearOrder(message) {
+    orderState.line = null; orderState.lines = [];
+    $("soLineField").hidden = true;
+    scopeParts(null);
+    $("orderStatus").textContent = message;
+  }
+
+  var lookupSeq = 0;
+  function lookup(kind, value, fillFields) {
+    var seq = ++lookupSeq;
+    $("orderStatus").textContent = "Looking up " + value + "…";
+    return fetch("/api/hardware/lookup?" + kind + "=" + encodeURIComponent(value))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (seq !== lookupSeq) return;
+        if (!res.ok) { clearOrder(res.error || "Not found."); return; }
+        if (res.lines.length === 1) { $("soLineField").hidden = true; applyLine(res.lines[0], fillFields); return; }
+        orderState.lines = res.lines;
+        var sel = $("soLine");
+        sel.innerHTML = '<option value="">Pick the job…</option>';
+        res.lines.forEach(function (l, i) {
+          var opt = document.createElement("option");
+          opt.value = i; opt.textContent = (l.job_number || "no job") + " — " + (l.item || "") + " " + (l.description || "");
+          sel.appendChild(opt);
+        });
+        $("soLineField").hidden = false;
+        $("orderStatus").textContent = res.lines.length + " lines on this SO — pick the job.";
+      })
+      .catch(function () { if (seq === lookupSeq) clearOrder("Couldn't reach the server for the order lookup."); });
+  }
+
+  $("soLine").addEventListener("change", function () {
+    var line = orderState.lines[this.value];
+    if (line) { $("soLineField").hidden = true; applyLine(line, true); }
+  });
+  $("jobNumber").addEventListener("change", function () {
+    var job = this.value.trim();
+    if (job) lookup("job", job, true);
+    else clearOrder("Enter a job number to fill in the SO and colour from SyteLine, and narrow the Part list to that job's parts.");
+  });
+  $("soNumber").addEventListener("change", function () {
+    var so = this.value.trim();
+    if (so && !$("jobNumber").value.trim()) lookup("so", so, true);
+  });
+  ["jobNumber", "soNumber"].forEach(function (id) {
+    $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); this.blur(); } });
+  });
 
   // Historical values that aren't in today's dropdowns (e.g. "IMTIYAAZ/AMZ")
   // are added as an option so editing an old row never silently drops them.
@@ -365,6 +452,8 @@
     $("completeDate").value = EVENT.complete_date || "";
     $("scrapOnly").checked = EVENT.status === "Scrap";
     $("comments").value = EVENT.comments || "";
+    // Narrow the Part list for the saved job without overwriting anything.
+    if (EVENT.job_number) lookup("job", EVENT.job_number, false);
   }
   render();
 })();

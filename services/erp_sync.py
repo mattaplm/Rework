@@ -139,12 +139,63 @@ def sync_orders() -> dict:
                 """,
                 m,
             )
-    return {"orders": len(rows), "jobs": len(job_numbers), "materials": len(materials)}
+    result = {"orders": len(rows), "jobs": len(job_numbers), "materials": len(materials)}
+    result.update(sync_hardware_orders())
+    return result
+
+
+_MATERIALS_BATCH = 1500
+
+
+def sync_hardware_orders() -> dict:
+    """Hardware's open order lines -> hw_synced_order_lines, plus each line's
+    job materials -> the shared synced_order_materials table (job numbers are
+    unique plant-wide, so Doors and Hardware jobs never collide there). Run
+    as part of sync_orders, so the same schedule and "Sync Orders Now" button
+    cover both departments. Materials are fetched in batches -- ~7,000 jobs is
+    too long an IN-list for one statement."""
+    rows = erp.fetch_all(queries.HW_ORDER_LINES_QUERY)
+    job_numbers = sorted({r["job_number"] for r in rows if r.get("job_number")})
+    materials = []
+    for start in range(0, len(job_numbers), _MATERIALS_BATCH):
+        materials += erp.fetch_all(queries.job_materials_for_jobs_query(job_numbers[start:start + _MATERIALS_BATCH]))
+
+    with db.get_conn() as conn, conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO hw_synced_order_lines
+                    (so_number, co_line, job_number, item, description, colour_in_code, colour_out_code,
+                     qty_ordered, due_date, stat, synced_at)
+                VALUES
+                    (%(so_number)s, %(co_line)s, %(job_number)s, %(item)s, %(description)s, %(colour_in_code)s,
+                     %(colour_out_code)s, %(qty_ordered)s, %(due_date)s, %(stat)s, now())
+                ON CONFLICT (so_number, co_line) DO UPDATE SET
+                    job_number = EXCLUDED.job_number, item = EXCLUDED.item, description = EXCLUDED.description,
+                    colour_in_code = EXCLUDED.colour_in_code, colour_out_code = EXCLUDED.colour_out_code,
+                    qty_ordered = EXCLUDED.qty_ordered, due_date = EXCLUDED.due_date, stat = EXCLUDED.stat,
+                    synced_at = now()
+                """,
+                row,
+            )
+        for m in materials:
+            cur.execute(
+                """
+                INSERT INTO synced_order_materials (job_number, part_number, description, qty, unit, unit_cost, synced_at)
+                VALUES (%(job_number)s, %(part_number)s, %(description)s, %(qty)s, %(unit)s, %(unit_cost)s, now())
+                ON CONFLICT (job_number, part_number) DO UPDATE SET
+                    description = EXCLUDED.description, qty = EXCLUDED.qty, unit = EXCLUDED.unit,
+                    unit_cost = EXCLUDED.unit_cost, synced_at = now()
+                """,
+                m,
+            )
+    return {"hw_lines": len(rows), "hw_jobs": len(job_numbers), "hw_materials": len(materials)}
 
 
 def sync_scrap_transactions() -> int:
-    """Pulls Doors scrap write-off transactions (reason_code='SCR') from the
-    last 2 calendar years into erp_scrap_transactions -- the "ERP actual"
+    """Pulls Doors and Hardware scrap write-off transactions (reason_code='SCR',
+    product groups in queries.py) from the last 2 calendar years into
+    erp_scrap_transactions -- the "ERP actual"
     side of the Turret and Doors Scrap write-off tabs (services/turret.py,
     services/rework.py)."""
     rows = erp.fetch_all(queries.SCRAP_TRANSACTIONS_QUERY, (date.today().year - 1,))

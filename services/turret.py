@@ -27,6 +27,7 @@ from __future__ import annotations
 import datetime
 
 import db
+import queries
 from services import erp_lookup, erp_reconciliation, reference_data, test_data
 from services.costing import compute_sheet_scrap_cost
 
@@ -247,7 +248,7 @@ def scrap_summary_by_week(write_off_week: int | None = None, write_off_year: int
         )
         rows = cur.fetchall()
 
-    erp_actuals = erp_reconciliation.erp_actuals_by_item_week()
+    erp_actuals = erp_reconciliation.erp_actuals_by_item_week(queries.DOORS_PRODUCT_GROUPS)
     for row in rows:
         match = erp_actuals.get((row["item"], row["write_off_year"], row["write_off_week"]))
         row["erp_qty"] = match["qty"] if match else None

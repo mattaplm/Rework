@@ -6,6 +6,13 @@
 
 <div class="page-header"><h1>📋 PC log</h1></div>
 
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="log">PC log</button>
+  <button class="tab-btn" data-tab="write_off">Scrap write-off</button>
+</div>
+
+<div class="tab-panel active" data-panel="log">
+
 <form class="card" method="get" style="margin-bottom:16px;">
   <div class="filters">
     <div class="field">
@@ -120,4 +127,99 @@
   {% if any_filter %}No entries match these filters.{% else %}Nothing logged yet.{% if current_user and current_user.role == 'admin' %} Import the history from <a href="{{ url_for('import_excel.import_page') }}#hardware">Import from Excel</a>.{% endif %}{% endif %}
 </div>
 {% endif %}
+</div>
+
+<!-- ───────────────────────── Scrap write-off ───────────────────────── -->
+<div class="tab-panel" data-panel="write_off">
+  <div class="card">
+    <h2>Scrap write-off vs. SyteLine</h2>
+    <p class="hint">
+      Scrapped parts are written off in SyteLine weekly, on the Monday <strong>after</strong> the week they
+      were requested -- e.g. requested in week 42, written off in week 43. Reworked parts aren't written off.
+      "ERP actual" is that part's SyteLine scrap total (reason SCR, product groups HW and FP) for the same week,
+      {% if scrap_synced_at %}last synced {{ scrap_synced_at.strftime("%d %b %Y %H:%M") }}{% else %}not synced yet{% endif %}
+      -- Admin → SQL Connection → Sync Scrap Transactions.
+    </p>
+    <form method="get" action="{{ url_for('hardware.log_page') }}#write_off" id="writeoffForm" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+      <label for="woPeriod" style="font-size:.85rem; font-weight:600;">Write-off week</label>
+      <select id="woPeriod">
+        <option value="">All weeks</option>
+        {% for w in writeoff_weeks %}
+        <option value="{{ w.write_off_year }}-{{ w.write_off_week }}"
+          {% if wo_year == w.write_off_year|string and wo_week == w.write_off_week|string %}selected{% endif %}>
+          Week {{ w.write_off_week }}, {{ w.write_off_year }}
+        </option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="wo_year" id="woYear" value="{{ wo_year or '' }}">
+      <input type="hidden" name="wo_week" id="woWeek" value="{{ wo_week or '' }}">
+    </form>
+  </div>
+
+  {% if writeoff_rows %}
+  <div class="card" style="margin-top:16px;">
+    <div class="table-scroll">
+      <table class="rework-table">
+        <thead>
+          <tr><th>Write-off week</th><th>Part</th><th>Product</th><th>Material</th><th>Scrapped qty</th><th>Scrap cost</th><th>Lines</th><th>ERP actual</th></tr>
+        </thead>
+        <tbody>
+          {% for r in writeoff_rows %}
+          {% set qty = r.total_qty|float %}
+          <tr>
+            <td class="col-nowrap">Week {{ r.write_off_week }}, {{ r.write_off_year }}</td>
+            <td class="col-nowrap">{{ r.part_number }}</td>
+            <td>{{ r.product_code or "—" }}</td>
+            <td>{{ r.material or "—" }}</td>
+            <td class="col-right"><strong>{{ qty|int if qty == qty|int else qty }}</strong></td>
+            <td class="col-right col-nowrap">{{ "$%.2f"|format(r.total_cost) if r.total_cost is not none else "—" }}</td>
+            <td class="col-right">{{ r.line_count }}</td>
+            <td class="col-nowrap">
+              {% if r.erp_qty is none %}
+                <span class="badge badge-grey">Not in ERP yet</span>
+              {% elif r.erp_qty == qty %}
+                <span class="badge badge-green">✓ matches ({{ r.erp_qty|int if r.erp_qty == r.erp_qty|int else r.erp_qty }})</span>
+              {% else %}
+                <span class="badge badge-red">ERP {{ r.erp_qty|int if r.erp_qty == r.erp_qty|int else r.erp_qty }} vs logged {{ qty|int if qty == qty|int else qty }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card empty-state" style="margin-top:16px;">No scrap write-off due for this week.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var tabBar = document.getElementById("tabBar");
+  function activateTab(key) {
+    var btn = tabBar.querySelector('.tab-btn[data-tab="' + key + '"]');
+    var panel = document.querySelector('.tab-panel[data-panel="' + key + '"]');
+    if (!btn || !panel) return;
+    document.querySelectorAll(".tab-btn, .tab-panel").forEach(function (el) { el.classList.remove("active"); });
+    btn.classList.add("active"); panel.classList.add("active");
+  }
+  tabBar.addEventListener("click", function (e) {
+    var btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    activateTab(btn.dataset.tab);
+    history.replaceState(null, "", "#" + btn.dataset.tab);
+  });
+  if (location.hash) activateTab(location.hash.slice(1));
+
+  document.getElementById("woPeriod").addEventListener("change", function () {
+    var parts = this.value.split("-");
+    document.getElementById("woYear").value = parts[0] || "";
+    document.getElementById("woWeek").value = parts[1] || "";
+    document.getElementById("writeoffForm").submit();
+  });
+})();
+</script>
 {% endblock %}

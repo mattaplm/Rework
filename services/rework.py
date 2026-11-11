@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 import db
+import queries
 from services import admin_data, erp_lookup, erp_reconciliation, reference_data, test_data
 from services.costing import COMPONENTS, PC_COST_TYPES, compute_costs
 
@@ -367,7 +368,7 @@ def scrap_writeoff_summary(write_off_week: int | None = None, write_off_year: in
         )
         rows = cur.fetchall()
 
-    erp_actuals = erp_reconciliation.erp_actuals_by_item_week()
+    erp_actuals = erp_reconciliation.erp_actuals_by_item_week(queries.DOORS_PRODUCT_GROUPS)
     for row in rows:
         match = erp_actuals.get((row["product_code"], row["write_off_year"], row["write_off_week"]))
         row["erp_qty"] = match["qty"] if match else None

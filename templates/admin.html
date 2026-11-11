@@ -543,7 +543,7 @@
   });
   runSyncButton("btnSyncItems", "/api/admin/erp/sync-items", "Syncing…", function (d) { return "Synced " + d.count + " items."; });
   runSyncButton("btnSyncColours", "/api/admin/erp/sync-colours", "Syncing…", function (d) { return "Synced " + d.count + " colours."; });
-  runSyncButton("btnSyncOrders", "/api/admin/erp/sync-orders", "Syncing…", function (d) { return "Synced " + d.orders + " orders, " + d.materials + " material lines."; });
+  runSyncButton("btnSyncOrders", "/api/admin/erp/sync-orders", "Syncing…", function (d) { return "Synced " + d.orders + " Doors orders, " + d.hw_lines + " Hardware order lines, " + (d.materials + d.hw_materials) + " material lines."; });
   runSyncButton("btnSyncScrap", "/api/admin/erp/sync-scrap", "Syncing…", function (d) { return "Synced " + d.count + " scrap transactions."; });
 
   // ── Test data ──

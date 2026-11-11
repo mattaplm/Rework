@@ -4,10 +4,11 @@ See services/hardware.py for what the log is and how it's costed."""
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 
-from services import admin_data, audit
+from services import admin_data, audit, erp_reconciliation
 from services import hardware as hw
 from services import hardware_admin
 from services.auth import current_user, login_required, role_required
@@ -31,9 +32,28 @@ def home():
 @login_required
 def log_page():
     filters = {key: (request.args.get(key) or "").strip() or None for key in hw.FILTER_KEYS}
+
+    # Scrap write-off tab: lands on the most recent write-off week (all of
+    # history is thousands of rows); an explicit "All weeks" submits both
+    # params empty and stays unfiltered -- same convention as Doors.
+    weeks = hw.list_writeoff_weeks()
+    wo_year, wo_week = request.args.get("wo_year") or None, request.args.get("wo_week") or None
+    if "wo_year" not in request.args and "wo_week" not in request.args and weeks:
+        # Latest week that has actually arrived (future-dated requests exist).
+        today = hw._today()
+        due = [w for w in weeks if date.fromisocalendar(w["write_off_year"], w["write_off_week"], 1) <= today]
+        latest = (due or weeks)[0]
+        wo_year, wo_week = str(latest["write_off_year"]), str(latest["write_off_week"])
+    writeoff_rows = hw.writeoff_summary(int(wo_year) if wo_year else None, int(wo_week) if wo_week else None)
+
     return render_template(
         "hw_log.html",
         active="hw_log",
+        writeoff_rows=writeoff_rows,
+        writeoff_weeks=weeks,
+        wo_year=wo_year,
+        wo_week=wo_week,
+        scrap_synced_at=erp_reconciliation.last_synced_at(),
         events=hw.list_events(filters),
         totals=hw.summary(filters),
         filters=filters,
@@ -73,6 +93,25 @@ def edit_page(event_id: int):
     if event is None:
         return redirect(url_for("hardware.log_page"))
     return _form_page(event)
+
+
+@bp.route("/api/hardware/lookup")
+@login_required
+def api_lookup():
+    """Entry form's job / SO auto-fill, from the local SyteLine order cache
+    (hw_synced_order_lines, refreshed with the Doors orders sync) -- never
+    SyteLine live. ?job=... returns that job's line; ?so=... every line."""
+    job, so = (request.args.get("job") or "").strip(), (request.args.get("so") or "").strip()
+    not_found = "Not in the local order cache -- it may be older than the sync window or newer than the last sync."
+    if job:
+        line = hw.lookup_job(job)
+        return (jsonify({"ok": True, "lines": [line]}) if line
+                else (jsonify({"ok": False, "error": "Job " + not_found}), 404))
+    if so:
+        lines = hw.lookup_so(so)
+        return (jsonify({"ok": True, "lines": lines}) if lines
+                else (jsonify({"ok": False, "error": "Sales order " + not_found}), 404))
+    return jsonify({"ok": False, "error": "Give a job or SO number"}), 400
 
 
 @bp.route("/api/hardware/events", methods=["POST"])

@@ -512,6 +512,65 @@ def test_hardware_pages_and_admin_api(sqlite_store, monkeypatch):
     saved = client.post(f"/api/hardware/admin/reasons/{reason_id}", json={"reason": "PITTED", "is_scrap": True, "sort_order": 3})
     assert saved.get_json()["updated_historical_rows"] == 1
     for path in ("/hardware", "/hardware/log", "/hardware/log?year=2026&status=Open&scrap=yes&q=SO&part=P",
-                 "/hardware/new", f"/hardware/{event_id}/edit", "/hardware/admin", "/import", "/dashboard"):
+                 "/hardware/new", f"/hardware/{event_id}/edit", "/hardware/admin", "/import", "/dashboard",
+                 "/hardware/log?wo_year=&wo_week=", "/hardware/log?wo_year=2026&wo_week=11"):
         assert client.get(path, follow_redirects=True).status_code == 200, path
     assert "PITTED" in client.get("/hardware/log").get_data(as_text=True)
+    assert client.get("/api/hardware/lookup?job=J1").status_code == 404
+    assert client.get("/api/hardware/lookup").status_code == 400
+
+
+def test_hardware_order_sync_lookup_and_scrap_writeoff(sqlite_store, monkeypatch):
+    import erp
+    import queries
+    line = dict(so_number="S000499636", co_line=2, job_number="J000994371", item="9260701.PC",
+                description="COLOSSUS MID FOLD HINGE", colour_in_code="RD", colour_out_code="RD",
+                qty_ordered=Decimal("6"), due_date=date(2026, 3, 4), stat="O")
+    second = {**line, "co_line": 7, "job_number": "J000994376", "item": "9810732.32"}
+    material = dict(job_number="J000994371", part_number="9064080", description="Frame leaf", qty=1, unit="EA", unit_cost=5.96)
+
+    def fake_fetch(query, *args):
+        if query == queries.HW_ORDER_LINES_QUERY:
+            return [line, second]
+        if "jobmatl_mst" in query:
+            return [material] if "J000994371" in query else []
+        return []  # Doors orders
+    monkeypatch.setattr(erp, "fetch_all", fake_fetch)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO colours (name, code, dulux_code) VALUES (%s, %s, %s)", ("FLAX POD MATT 20S9218M", "RD", "20S9218M"))
+    result = erp_sync.sync_orders()
+    assert (result["hw_lines"], result["hw_jobs"], result["hw_materials"]) == (2, 2, 1)
+    erp_sync.sync_orders()  # re-sync upserts, no duplicates
+
+    found = hardware.lookup_job("994371")  # digits only, padded like SyteLine
+    assert (found["so_number"], found["colour"], found["colour_code"], found["materials"]) == \
+        ("S000499636", "FLAX POD MATT", "20S9218M", ["9064080"])
+    assert [l["job_number"] for l in hardware.lookup_so("499636")] == ["J000994371", "J000994376"]
+    assert hardware.lookup_job("J1") is None
+
+    # A new entry saves job/SO the way SyteLine writes them.
+    hardware_admin.save_part(None, {"part_number": "9064080", "unit_cost": "5"})
+    hardware_admin.save_part(None, {"part_number": "9800865C", "unit_cost": "2"})
+    event = hardware.create_event(hw_payload(part_number="9064080", job_number="994371", so_number="499636",
+                                             request_date="2026-03-04", quantity=2), None)  # ISO week 10
+    assert (event["job_number"], event["so_number"]) == ("J000994371", "S000499636")
+    hardware.create_event(hw_payload(request_date="2026-03-05", quantity=3), None)  # 9800865C, week 10
+    hardware.create_event(hw_payload(request_date="2026-03-05", reason="MISSING"), None)  # rework: not written off
+
+    # Scrap: written off the Monday after the request week (week 11). HW + FP
+    # count for Hardware; the DO row for the same item is ignored.
+    txns = [dict(txn_date=date(2026, 3, 9), item="9064080", description="", qty=-2, scrap_cost=-12,
+                 scrap_labour_cost=0, product_group="HW", product_code="", type=None, user_code="U"),
+            dict(txn_date=date(2026, 3, 9), item="9800865C", description="", qty=-1, scrap_cost=-2,
+                 scrap_labour_cost=0, product_group="FP", product_code="", type=None, user_code="U"),
+            dict(txn_date=date(2026, 3, 9), item="9800865C", description="", qty=-5, scrap_cost=-2,
+                 scrap_labour_cost=0, product_group="DO", product_code="", type=None, user_code="U")]
+    monkeypatch.setattr(erp, "fetch_all", lambda *args: txns)
+    erp_sync.sync_scrap_transactions()
+    rows = {r["part_number"]: r for r in hardware.writeoff_summary(2026, 11)}
+    assert set(rows) == {"9064080", "9800865C"}
+    assert (float(rows["9064080"]["total_qty"]), rows["9064080"]["erp_qty"]) == (2, 2)  # matches
+    assert (float(rows["9800865C"]["total_qty"]), rows["9800865C"]["erp_qty"]) == (3, 1)  # FP only, not the DO row
+    assert hardware.list_writeoff_weeks()[0] == {"write_off_year": 2026, "write_off_week": 11}
+    assert hardware.writeoff_summary(2026, 10) == []
+    assert ("9800865C", 2026, 11) in erp_reconciliation.erp_actuals_by_item_week(queries.DOORS_PRODUCT_GROUPS)

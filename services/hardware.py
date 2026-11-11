@@ -29,6 +29,8 @@ from __future__ import annotations
 import datetime
 
 import db
+import queries
+from services import erp_lookup, erp_reconciliation
 
 STATUSES = ("Log Job", "Open", "Closed", "Scrap")
 LOCATIONS = ("PC", "AH")
@@ -122,14 +124,121 @@ def list_colours() -> list[dict]:
         rows = cur.fetchall()
     seen, result = set(), []
     for r in rows:
-        name, code = r["name"].strip(), (r["dulux_code"] or "").strip()
-        if code and name.upper().endswith(" " + code.upper()):
-            name = name[: -len(code)].strip()
-        key = (name.upper(), code.upper())
+        colour = _split_colour(r["name"], r["dulux_code"])
+        key = (colour["colour"].upper(), (colour["code"] or "").upper())
         if key not in seen:
             seen.add(key)
-            result.append({"colour": " ".join(name.split()), "code": code or None})
+            result.append(colour)
     return result
+
+
+def _split_colour(name: str, dulux: str | None) -> dict:
+    name, code = " ".join((name or "").split()), (dulux or "").strip()
+    if code and name.upper().endswith(" " + code.upper()):
+        name = name[: -len(code)].strip()
+    return {"colour": name, "code": code or None}
+
+
+def _colour_for_code(cur, code: str | None) -> dict | None:
+    if not code:
+        return None
+    cur.execute("SELECT name, dulux_code FROM colours WHERE code = %s", (code,))
+    row = cur.fetchone()
+    return _split_colour(row["name"], row["dulux_code"]) if row else None
+
+
+# ── SyteLine order lookups (local cache, refreshed by erp_sync.sync_orders) ──
+
+def _line_json(cur, line: dict) -> dict:
+    colour = _colour_for_code(cur, line["colour_out_code"] or line["colour_in_code"])
+    cur.execute("SELECT part_number FROM synced_order_materials WHERE job_number = %s ORDER BY part_number",
+                (line["job_number"],))
+    materials = [r["part_number"].upper() for r in cur.fetchall()]
+    return {
+        "so_number": line["so_number"], "co_line": line["co_line"], "job_number": line["job_number"],
+        "item": line["item"], "description": line["description"],
+        "qty_ordered": float(line["qty_ordered"]) if line["qty_ordered"] is not None else None,
+        "colour": colour["colour"] if colour else None, "colour_code": colour["code"] if colour else None,
+        "materials": materials,
+    }
+
+
+def lookup_job(job_number: str) -> dict | None:
+    """The cached SyteLine order line for a Hardware job: its SO, the finished
+    item, colour (split the same way as list_colours) and the job's material
+    part numbers, which the entry form uses to narrow the Part list."""
+    job = erp_lookup.normalize_job_number(job_number)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM hw_synced_order_lines WHERE LOWER(job_number) = LOWER(%s) "
+                    "ORDER BY synced_at DESC LIMIT 1", (job,))
+        line = cur.fetchone()
+        return _line_json(cur, line) if line else None
+
+
+def lookup_so(so_number: str) -> list[dict]:
+    """Every cached line (= job) on a Hardware SO, in line order."""
+    so = erp_lookup.normalize_so_number(so_number)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM hw_synced_order_lines WHERE LOWER(so_number) = LOWER(%s) ORDER BY co_line", (so,))
+        return [_line_json(cur, line) for line in cur.fetchall()]
+
+
+# ── Scrap write-off vs. SyteLine ────────────────────────────────────────────
+# Hardware's scrap is written off in SyteLine weekly, on the Monday after the
+# week it was requested -- the same "following week" rule as Doors, keyed on
+# Request date. Confirmed against the real data 2026-11-11 by testing every
+# candidate (request / co-create / pick / complete date, same week or the next):
+# request date + 1 week matched SyteLine's qty exactly for 44% of item-weeks
+# across all of history (next best: pick date + 1 week, 32%), and ~90% every
+# month since February 2026. 75% of the SCR transactions are dated a Monday.
+
+def _writeoff_date_expr() -> str:
+    return db.date_shift(db.week_start("request_date"), 7)
+
+
+def writeoff_summary(write_off_year: int | None = None, write_off_week: int | None = None) -> list[dict]:
+    clauses, params = ["is_scrap"], []
+    if write_off_year is not None:
+        clauses.append(f"{db.date_part('isoyear', _writeoff_date_expr())} = %s")
+        params.append(write_off_year)
+    if write_off_week is not None:
+        clauses.append(f"{db.date_part('week', _writeoff_date_expr())} = %s")
+        params.append(write_off_week)
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT s.write_off_date,
+                   {db.date_part('isoyear', 's.write_off_date')} AS write_off_year,
+                   {db.date_part('week', 's.write_off_date')} AS write_off_week,
+                   s.part_number, p.product_code, p.material,
+                   SUM(s.quantity) AS total_qty, SUM(s.scrap_cost) AS total_cost, COUNT(*) AS line_count
+            FROM (
+                SELECT part_number, quantity, scrap_cost, {_writeoff_date_expr()} AS write_off_date
+                FROM hw_events WHERE {" AND ".join(clauses)}
+            ) s
+            LEFT JOIN hw_parts p ON p.part_number = s.part_number
+            GROUP BY s.write_off_date, s.part_number, p.product_code, p.material
+            ORDER BY s.write_off_date DESC, s.part_number
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+    actuals = erp_reconciliation.erp_actuals_by_item_week(queries.HARDWARE_SCRAP_GROUPS)
+    for row in rows:
+        match = actuals.get((row["part_number"], row["write_off_year"], row["write_off_week"]))
+        row["erp_qty"] = float(match["qty"]) if match else None
+        row["erp_cost"] = float(match["cost"]) if match and match["cost"] is not None else None
+    return rows
+
+
+def list_writeoff_weeks() -> list[dict]:
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""SELECT DISTINCT {db.date_part('isoyear', 'w')} AS write_off_year, {db.date_part('week', 'w')} AS write_off_week
+                FROM (SELECT {_writeoff_date_expr()} AS w FROM hw_events WHERE is_scrap) s
+                ORDER BY write_off_year DESC, write_off_week DESC"""
+        )
+        return [r for r in cur.fetchall() if r["write_off_year"]]
 
 
 # ── Entries ─────────────────────────────────────────────────────────────────
@@ -156,8 +265,10 @@ def _date(payload: dict, key: str, errors: dict) -> datetime.date | None:
 def _clean(payload: dict, existing: dict | None) -> dict:
     errors: dict[str, str] = {}
     values = {
-        "so_number": _str(payload, "so_number"),
-        "job_number": _str(payload, "job_number"),
+        # Saved the way SyteLine writes them (1117852 -> J001117852), so the
+        # order lookup and the PC log's SO/job filter line up.
+        "so_number": erp_lookup.normalize_so_number(_str(payload, "so_number") or "") or None,
+        "job_number": erp_lookup.normalize_job_number(_str(payload, "job_number") or "") or None,
         "colour": _str(payload, "colour"),
         "colour_code": _str(payload, "colour_code"),
         "location": _str(payload, "location"),

@@ -597,8 +597,39 @@ Same users/roles and colours as Doors; everything else is its own:
   part / qty, 320 parts, and a second upload changes nothing. Powdercoat/
   Assembly names used at least 3 times (combined entries like
   "IMTIYAAZ/AMZ" split) seed the people lists; rows keep the sheet's text.
+- **SyteLine product groups** (`queries.py` constants): Hardware **orders**
+  are filtered to `HW` (the finished `.PC` assemblies on the SO line --
+  747 of 751 recent log jobs found were HW lines), but Hardware **scrap** is
+  `HW` + `FP`: the raw parts the log records (Urbo castings 9800865C/
+  9800867C/9800738...) are group FP -- 58% of the log's scrapped qty since
+  June 2025, and 791 of 796 FP scrap transactions are parts the log uses.
+  Confirmed live 2026-11-11. Change `HARDWARE_SCRAP_GROUPS` if that's ever
+  wrong; Doors/Turret reconciliation passes `DOORS_PRODUCT_GROUPS` so their
+  numbers are unaffected by the shared table.
+- **Order lookup** (`hw_synced_order_lines`, migration `0022` / sqlite
+  `0009`): a Hardware SO has many lines and each line is its own job, so it
+  has its own per-line cache rather than Doors' one-row-per-SO
+  `synced_orders`. Filled by `erp_sync.sync_hardware_orders`, which
+  `sync_orders` calls -- same schedule and "Sync Orders Now" button; job
+  materials go into the shared `synced_order_materials` (fetched in batches
+  of 1,500 jobs). ~21s for both departments on SQLite. The entry form works
+  from the **job number** (the sheet does: 8,422 of 9,867 2026 rows have a
+  job, 9 an SO) -- `/api/hardware/lookup?job=` fills SO + colour and narrows
+  the Part list to the job's materials that are in the parts list (e.g.
+  J001117447 -> 9800738 / 9800739RE / 9800739RI); `?so=` with no job offers
+  the SO's lines to pick from. New entries save job/SO in SyteLine's format
+  (`J001117852`, `S000499636`); imported rows keep the sheet's bare digits.
+- **Scrap write-off** (second tab on the PC log, `hardware.writeoff_summary`):
+  scrapped qty per part per write-off week vs. SyteLine SCR transactions.
+  Write-off week = the Monday after the **request date**'s week -- chosen
+  by testing every candidate against the real data (request/co-create/
+  pick/complete date, same or next week): request + 1 week matched exactly
+  on 44% of item-weeks over all history (next best 32%) and ~90% every
+  month since Feb 2026 (87% over weeks 6-44, week 45 34/34); 75% of SCR
+  transactions are dated a Monday. Opens on the latest write-off week that
+  has arrived (the sheet has some future-dated requests).
 - Not built yet: a Hardware dashboard (the workbook's many pivot/report
-  tabs), and ERP lookups (SO/job auto-fill, SyteLine scrap reconciliation).
+  tabs).
 
 ## Where to look for changes
 

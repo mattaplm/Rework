@@ -29,7 +29,7 @@ def sheet_item_codes() -> set[str]:
         return {r["part_number"] for r in cur.fetchall()}
 
 
-def erp_actuals_by_item_week() -> dict[tuple[str, int, int], dict]:
+def erp_actuals_by_item_week(product_groups: tuple[str, ...] | None = None) -> dict[tuple[str, int, int], dict]:
     """{(item, isoyear, isoweek): {"qty": ..., "cost": ...}}, keyed by the
     ISO year/week the transaction actually happened in SyteLine (derived
     here the same way Turret/Doors derive their own write-off weeks, not
@@ -42,6 +42,9 @@ def erp_actuals_by_item_week() -> dict[tuple[str, int, int], dict]:
     scrapped" counts -- summing signed and then taking abs() still lets a
     genuine correcting reversal (a wrong entry immediately offset by its
     exact negative) net out to zero first, which is correct.
+
+    `product_groups` limits it to one department's items (Hardware passes
+    queries.HARDWARE_SCRAP_GROUPS); None = everything synced.
     """
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -53,8 +56,10 @@ def erp_actuals_by_item_week() -> dict[tuple[str, int, int], dict]:
                 SUM(qty) AS qty,
                 SUM(scrap_cost) AS cost
             FROM erp_scrap_transactions
+            {"WHERE " + db.in_values("product_group", "%s") if product_groups else ""}
             GROUP BY item, isoyear, isoweek
-            """
+            """,
+            (list(product_groups),) if product_groups else None,
         )
         return {
             (r["item"], r["isoyear"], r["isoweek"]): {"qty": abs(r["qty"]), "cost": abs(r["cost"])}

@@ -42,6 +42,23 @@ all -- an ERP data gap on that specific item, not something to work around
 locally by guessing from its description.
 """
 
+# SyteLine product groups (`item_mst.uf_emdaProductGroup`) per department.
+# Hardware's ORDER lines are the finished `.PC` assemblies, group HW (confirmed
+# live 2026-11-11: 747 of 751 recent Hardware-log jobs found in coitem_all are
+# HW lines). But the raw parts the Hardware log actually records -- the Urbo
+# castings 9800865C/9800867C/9800738 etc. -- are group FP, and they're 58% of
+# the log's scrapped qty since June 2025; 791 of the 796 FP scrap
+# transactions since 2025 are parts the Hardware log uses. So Hardware's
+# scrap reconciliation needs HW + FP, while its order sync needs only HW.
+DOORS_PRODUCT_GROUPS = ("DO",)
+HARDWARE_ORDER_GROUPS = ("HW",)
+HARDWARE_SCRAP_GROUPS = ("HW", "FP")
+
+
+def _in_list(values) -> str:
+    return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+
+
 ITEMS_QUERY = """
 SELECT
     item                  AS part_number,
@@ -212,7 +229,9 @@ WHERE jm.job IN ({escaped})
 # actually drives the Doors/Turret exclusion split, and it's now broader
 # than this literal list (plan_code = 'SHT' matches more than these 5
 # codes) -- the two are allowed to diverge.
-SCRAP_TRANSACTIONS_QUERY = """
+# Doors and Hardware share this one sync/table (2026-11-11); each department's
+# reconciliation reads only its own groups -- see erp_reconciliation.
+SCRAP_TRANSACTIONS_QUERY = f"""
 SELECT
     mt.CreateDate           AS txn_date,
     mt.item                 AS item,
@@ -232,5 +251,30 @@ FROM alpac_App.dbo.matltran_mst AS mt WITH (NOLOCK)
 LEFT JOIN alpac_App.dbo.item_mst AS it WITH (NOLOCK) ON it.item = mt.item
 WHERE mt.reason_code = 'SCR'
   AND YEAR(mt.CreateDate) >= ?
-  AND it.uf_emdaProductGroup = 'DO'
+  AND it.uf_emdaProductGroup IN ({_in_list(DOORS_PRODUCT_GROUPS + HARDWARE_SCRAP_GROUPS)})
+"""
+
+
+# Hardware's open order lines (2026-11-11). Unlike Doors (one door line per
+# SO, cached in synced_orders keyed by SO), a Hardware SO has many lines and
+# each line is its own job (e.g. S000499636 lines 1-7 = J000994370-76), so
+# this goes into its own per-line table, hw_synced_order_lines. Same 30-day
+# due-date window as ORDERS_SYNC_QUERY; ~7,000 lines, ~3s live. The Hardware
+# log is driven by job number (8,422 of 9,867 rows in 2026 have a job, 9 an SO).
+HW_ORDER_LINES_QUERY = f"""
+SELECT
+    co.co_num                  AS so_number,
+    co.co_line                 AS co_line,
+    co.ref_num                 AS job_number,
+    co.item                    AS item,
+    im.description             AS description,
+    co.uf_emdaColourInside     AS colour_in_code,
+    co.uf_emdaColourOutside    AS colour_out_code,
+    co.qty_ordered             AS qty_ordered,
+    co.due_date                AS due_date,
+    co.stat                    AS stat
+FROM alpac_App.dbo.coitem_all AS co WITH (NOLOCK)
+INNER JOIN alpac_App.dbo.item_mst AS im WITH (NOLOCK) ON im.item = co.item
+WHERE im.uf_emdaProductGroup IN ({_in_list(HARDWARE_ORDER_GROUPS)})
+  AND (co.due_date IS NULL OR co.due_date >= DATEADD(DAY, -30, CAST(GETDATE() AS DATE)))
 """

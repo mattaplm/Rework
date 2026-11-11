@@ -332,6 +332,7 @@ table.rework-table.compact td.col-wide{min-width:120px;}
   background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border); margin-top:4px;
 }
 .conn-banner[hidden]{display:none !important;}
+.field[hidden]{display:none !important;}
 .conn-banner.ok{background:var(--good-soft); color:var(--good); border-color:var(--good-border);}
 .conn-banner.error{background:var(--crit-soft); color:var(--crit); border-color:var(--crit-border);}
 .conn-banner.test{background:var(--test-soft); color:var(--test); border-color:var(--test-border); margin-bottom:16px;}
