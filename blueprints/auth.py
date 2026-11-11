@@ -22,7 +22,7 @@ def _active_usernames() -> list[str]:
 def login_page():
     if request.method == "GET":
         if auth_service.current_user():
-            return redirect(url_for("dashboard.dashboard_page"))
+            return redirect(url_for("pages.index"))
         return render_template("login.html", error=None, usernames=_active_usernames())
 
     username = request.form.get("username", "").strip()
@@ -42,7 +42,7 @@ def login_page():
     audit.log(user["username"], "login")
     if user["must_change_password"]:
         return redirect(url_for("auth.change_password_page"))
-    return redirect(request.args.get("next") or url_for("dashboard.dashboard_page"))
+    return redirect(request.args.get("next") or url_for("pages.index"))
 
 
 @bp.route("/logout", methods=["POST"])
@@ -67,4 +67,4 @@ def change_password_page():
     user = auth_service.current_user()
     db.set_user_password(user["id"], generate_password_hash(new_password), must_change=False)
     audit.log(user["username"], "change_password", "user", user["id"])
-    return redirect(url_for("dashboard.dashboard_page"))
+    return redirect(url_for("pages.index"))

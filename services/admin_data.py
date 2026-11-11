@@ -65,7 +65,8 @@ def save_reason(reason_id: int, reason: str, code: str | None, source: str, faul
 
 # ── Work centres (door_types merged into cpq_door_codes.family_name below) ──
 
-_NAMED_TABLES = {"work_centres", "people", "turret_open_options", "turret_variations"}
+_NAMED_TABLES = {"work_centres", "people", "turret_open_options", "turret_variations",
+                 "hw_powdercoaters", "hw_assemblers"}
 
 
 def _check_table(table: str) -> str:
@@ -105,6 +106,8 @@ _NAMED_EVENT_COLUMN = {
     "people": ("rework_events", "entered_by_name"),
     "turret_open_options": ("turret_events", "open_status"),
     "turret_variations": ("turret_events", "variation"),
+    "hw_powdercoaters": ("hw_events", "powdercoater"),
+    "hw_assemblers": ("hw_events", "assembler"),
 }
 
 

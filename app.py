@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from flask import Flask, request
 
 import db
-from blueprints import admin, auth, dashboard, import_excel, pages, rework, turret, users
+from blueprints import admin, auth, dashboard, hardware, import_excel, pages, rework, turret, users
 from services import scheduled_sync, version
 from services.auth import current_user, touch_current_session
 
@@ -36,6 +36,7 @@ def create_app() -> Flask:
     app.register_blueprint(users.bp)
     app.register_blueprint(import_excel.bp)
     app.register_blueprint(dashboard.bp)
+    app.register_blueprint(hardware.bp)
 
     @app.get("/health")
     def health():

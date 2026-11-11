@@ -1,0 +1,123 @@
+{% extends "hw_base.html" %}
+{% block title %}PC log · Hardware Rework{% endblock %}
+{% block content %}
+{% set can_edit = current_user and current_user.role in ('operator', 'admin') %}
+{% set any_filter = filters.values()|select|list %}
+
+<div class="page-header"><h1>📋 PC log</h1></div>
+
+<form class="card" method="get" style="margin-bottom:16px;">
+  <div class="filters">
+    <div class="field">
+      <label for="month">Month</label>
+      <select id="month" name="month">
+        <option value="">All</option>
+        {% for m in range(1, 13) %}
+        <option value="{{ m }}" {% if filters.month == m|string %}selected{% endif %}>{{ ["January","February","March","April","May","June","July","August","September","October","November","December"][m-1] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="year">Year</label>
+      <select id="year" name="year">
+        <option value="">All</option>
+        {% for y in years %}<option value="{{ y }}" {% if filters.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="status">Status</label>
+      <select id="status" name="status">
+        <option value="">All</option>
+        {% for s in statuses %}<option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="reason">Reason</label>
+      <select id="reason" name="reason">
+        <option value="">All</option>
+        {% for r in reasons %}<option value="{{ r }}" {% if filters.reason == r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="location">Location</label>
+      <select id="location" name="location">
+        <option value="">All</option>
+        {% for l in locations %}<option value="{{ l }}" {% if filters.location == l %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="scrap">Scrap / rework</label>
+      <select id="scrap" name="scrap">
+        <option value="">Both</option>
+        <option value="yes" {% if filters.scrap == 'yes' %}selected{% endif %}>Scrapped</option>
+        <option value="no" {% if filters.scrap == 'no' %}selected{% endif %}>Reworked</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="part">Part</label>
+      <input type="text" id="part" name="part" value="{{ filters.part or '' }}" placeholder="98008…">
+    </div>
+    <div class="field">
+      <label for="q">SO / job</label>
+      <input type="text" id="q" name="q" value="{{ filters.q or '' }}" placeholder="SO or job number">
+    </div>
+    <button type="submit" class="btn-primary" style="width:auto; padding:0 20px;">Filter</button>
+    {% if any_filter %}<a href="{{ url_for('hardware.log_page') }}" class="btn-text">Clear filters</a>{% endif %}
+  </div>
+</form>
+
+<div class="admin-grid">
+  <div class="stat-tile"><div class="stat-label">Entries</div><div class="stat-value">{{ "{:,}".format(totals.entries) }}</div></div>
+  <div class="stat-tile"><div class="stat-label">Scrapped qty</div><div class="stat-value">{{ "{:,}".format(totals.scrap_qty) }}</div></div>
+  <div class="stat-tile"><div class="stat-label">Reworked qty</div><div class="stat-value">{{ "{:,}".format(totals.rework_qty) }}</div></div>
+  <div class="stat-tile"><div class="stat-label">Scrap cost</div><div class="stat-value">{{ "${:,.2f}".format(totals.scrap_cost) }}</div></div>
+  <div class="stat-tile"><div class="stat-label">Material (zinc) scrap cost</div><div class="stat-value">{{ "${:,.2f}".format(totals.material_scrap_cost) }}</div></div>
+  <div class="stat-tile"><div class="stat-label">Outstanding</div><div class="stat-value">{{ "{:,}".format(totals.outstanding) }}</div><div class="stat-sub">Log Job + Open</div></div>
+</div>
+
+{% if events %}
+<div class="card">
+  {% if totals.entries > events|length %}
+  <p class="hint" style="margin-bottom:10px;">Showing the newest {{ events|length }} of {{ "{:,}".format(totals.entries) }} — the totals above cover all of them. Filter to narrow it down.</p>
+  {% endif %}
+  <div class="table-scroll">
+    <table class="rework-table">
+      <thead>
+        <tr>
+          <th>Request date</th><th>Status</th><th>SO</th><th>Job</th><th>Part</th><th>Qty</th>
+          <th>Colour</th><th>Loc.</th><th>Reason</th><th>Scrap?</th><th>Powdercoat</th><th>Assembly</th>
+          <th>Pick</th><th>Complete</th><th>Scrap cost</th><th>Comments</th>{% if can_edit %}<th></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td class="col-nowrap">{{ e.request_date.strftime("%d %b %Y") }}</td>
+          <td><span class="status-pill {{ e.status|lower|replace(' ', '') }}">{{ e.status }}</span></td>
+          <td class="col-nowrap">{{ e.so_number or "" }}</td>
+          <td class="col-nowrap">{{ e.job_number or "" }}</td>
+          <td class="col-nowrap">{{ e.part_number }}</td>
+          <td class="col-right">{{ e.quantity }}</td>
+          <td>{{ e.colour or "" }}</td>
+          <td>{{ e.location or "" }}</td>
+          <td>{{ e.reason or "" }}</td>
+          <td>{{ "Scrap" if e.is_scrap else "Rework" }}</td>
+          <td>{{ e.powdercoater or "" }}</td>
+          <td>{{ e.assembler or "" }}</td>
+          <td class="col-nowrap">{{ e.pick_date.strftime("%d %b %Y") if e.pick_date else "" }}</td>
+          <td class="col-nowrap">{{ e.complete_date.strftime("%d %b %Y") if e.complete_date else "" }}</td>
+          <td class="col-nowrap col-right">{{ "$%.2f"|format(e.scrap_cost) if e.scrap_cost is not none else "—" }}</td>
+          <td class="col-wide">{{ e.comments or "" }}</td>
+          {% if can_edit %}<td><a class="btn-sm" href="{{ url_for('hardware.edit_page', event_id=e.id) }}">Edit</a></td>{% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card empty-state">
+  {% if any_filter %}No entries match these filters.{% else %}Nothing logged yet.{% if current_user and current_user.role == 'admin' %} Import the history from <a href="{{ url_for('import_excel.import_page') }}#hardware">Import from Excel</a>.{% endif %}{% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,304 @@
+{% extends "hw_base.html" %}
+{% block title %}Hardware admin · Hardware Rework{% endblock %}
+{% block content %}
+
+<div class="page-header"><h1>⚙️ Hardware admin</h1></div>
+
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="reasons">Reasons</button>
+  <button class="tab-btn" data-tab="parts">Parts</button>
+  <button class="tab-btn" data-tab="hw_powdercoaters">Powdercoat people</button>
+  <button class="tab-btn" data-tab="hw_assemblers">Assembly people</button>
+</div>
+
+<!-- ───────────────────────── Reasons ───────────────────────── -->
+<div class="tab-panel active" data-panel="reasons">
+  <div class="card">
+    <h2>Reasons <span class="optional">fault types on the entry form; Scrap decides whether the parts are scrapped (costed) or reworked</span></h2>
+    <table class="admin-table">
+      <thead><tr><th>Reason</th><th>Scrap?</th><th>Sort order</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for r in reasons %}
+        <tr class="{% if not r.active %}inactive-row{% endif %}" data-id="{{ r.id }}">
+          <td>
+            <span class="view-val">{{ r.reason }}</span>
+            <input type="text" class="edit-val reason-field" value="{{ r.reason }}" data-original="{{ r.reason }}">
+          </td>
+          <td>
+            <span class="view-val">{{ "Scrap" if r.is_scrap else "Rework" }}</span>
+            <select class="edit-val scrap-field" data-original="{{ r.is_scrap|lower }}">
+              <option value="true" {% if r.is_scrap %}selected{% endif %}>Scrap</option>
+              <option value="false" {% if not r.is_scrap %}selected{% endif %}>Rework</option>
+            </select>
+          </td>
+          <td>
+            <span class="view-val">{{ r.sort_order }}</span>
+            <input type="number" class="edit-val sort-field" value="{{ r.sort_order }}" data-original="{{ r.sort_order }}" style="width:70px;">
+          </td>
+          <td>{% if r.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td class="col-nowrap">
+            <span class="view-val actions-row">
+              <button class="btn-sm row-edit" type="button">Edit</button>
+              <button class="btn-sm reason-active" type="button" data-active="{{ r.active|lower }}">{{ "Deactivate" if r.active else "Activate" }}</button>
+            </span>
+            <span class="edit-val actions-row">
+              <button class="btn-sm accent reason-save" type="button">Save</button>
+              <button class="btn-sm row-cancel" type="button">Cancel</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form class="inline-form" id="formNewReason">
+      <input type="text" name="reason" placeholder="New reason" required>
+      <select name="is_scrap">
+        <option value="true">Scrap</option>
+        <option value="false">Rework</option>
+      </select>
+      <button type="submit" class="btn-sm accent">Add reason</button>
+    </form>
+    <p class="hint" style="margin-top:10px;">Renaming a reason also renames it on every past entry. Changing Scrap/Rework only affects entries saved from now on — past entries keep the costs they were logged with.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────── Parts ───────────────────────── -->
+<div class="tab-panel" data-panel="parts">
+  <div class="card">
+    <h2>Parts <span class="optional">the costs the entry form uses, from the workbook's Data Sheet</span></h2>
+    <div class="filters" style="margin-bottom:12px;">
+      <div class="field"><label for="partSearch">Search</label><input type="search" id="partSearch" placeholder="Part, product, supplier…"></div>
+      <span class="hint" id="partCount"></span>
+    </div>
+    <div class="table-scroll">
+      <table class="admin-table" id="partTable">
+        <thead><tr><th>Part</th><th>Unit cost</th><th>Material cost / unit</th><th>Product</th><th>Material</th><th>Supplier</th><th>Status</th><th></th></tr></thead>
+        <tbody id="partRows">
+          {% for p in parts %}
+          <tr class="{% if not p.active %}inactive-row{% endif %}" data-part="{{ p.part_number }}">
+            {% for key, width in [("part_number", 130), ("unit_cost", 90), ("material_cost", 90), ("product_code", 70), ("material", 80), ("supplier", 110)] %}
+            {% set v = p[key] %}
+            {% set shown = ("%.4f"|format(v)).rstrip('0').rstrip('.') if v is not none and key.endswith('cost') else (v if v is not none else '') %}
+            <td>
+              <span class="view-val">{% if key.endswith('cost') and shown != '' %}${% endif %}{{ shown }}</span>
+              <input type="{{ 'number' if key.endswith('cost') else 'text' }}" {% if key.endswith('cost') %}step="any" min="0"{% endif %}
+                     class="edit-val" data-field="{{ key }}" value="{{ shown }}" data-original="{{ shown }}" style="width:{{ width }}px;">
+            </td>
+            {% endfor %}
+            <td>{% if p.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+            <td class="col-nowrap">
+              <span class="view-val actions-row">
+                <button class="btn-sm row-edit" type="button">Edit</button>
+                <button class="btn-sm part-active" type="button" data-active="{{ p.active|lower }}">{{ "Deactivate" if p.active else "Activate" }}</button>
+              </span>
+              <span class="edit-val actions-row">
+                <button class="btn-sm accent part-save" type="button">Save</button>
+                <button class="btn-sm row-cancel" type="button">Cancel</button>
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <form class="inline-form" id="formNewPart">
+      <input type="text" name="part_number" placeholder="Part number" required>
+      <input type="number" name="unit_cost" placeholder="Unit cost" step="any" min="0">
+      <input type="number" name="material_cost" placeholder="Material cost / unit" step="any" min="0">
+      <input type="text" name="product_code" placeholder="Product (e.g. CT)">
+      <input type="text" name="material" placeholder="Material (e.g. Zinc)">
+      <input type="text" name="supplier" placeholder="Supplier">
+      <button type="submit" class="btn-sm accent">Add part</button>
+    </form>
+    <p class="hint" style="margin-top:10px;">A cost change applies to entries saved from now on — past entries keep the cost they were logged with. Deactivate a part to drop it from the entry form.</p>
+  </div>
+</div>
+
+<!-- ───────────────────────── People ───────────────────────── -->
+{% for table, label, items in [("hw_powdercoaters", "Powdercoat", powdercoaters), ("hw_assemblers", "Assembly", assemblers)] %}
+<div class="tab-panel" data-panel="{{ table }}">
+  <div class="card">
+    <h2>{{ label }} people <span class="optional">the {{ label }} dropdown on the entry form</span></h2>
+    <table class="admin-table">
+      <thead><tr><th>Name</th><th>Sort order</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for i in items %}
+        <tr class="{% if not i.active %}inactive-row{% endif %}" data-name="{{ i.name }}">
+          <td>
+            <span class="view-val">{{ i.name }}</span>
+            <input type="text" class="edit-val name-field" value="{{ i.name }}" data-original="{{ i.name }}">
+          </td>
+          <td>
+            <span class="view-val">{{ i.sort_order }}</span>
+            <input type="number" class="edit-val sort-field" value="{{ i.sort_order }}" data-original="{{ i.sort_order }}" style="width:70px;">
+          </td>
+          <td>{% if i.active %}<span class="badge badge-green">Active</span>{% else %}<span class="badge badge-grey">Inactive</span>{% endif %}</td>
+          <td class="col-nowrap">
+            <span class="view-val actions-row">
+              <button class="btn-sm row-edit" type="button">Edit</button>
+              <button class="btn-sm named-active" type="button" data-table="{{ table }}" data-active="{{ i.active|lower }}">{{ "Deactivate" if i.active else "Activate" }}</button>
+            </span>
+            <span class="edit-val actions-row">
+              <button class="btn-sm accent named-save" type="button" data-table="{{ table }}">Save</button>
+              <button class="btn-sm row-cancel" type="button">Cancel</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form class="inline-form named-new" data-table="{{ table }}">
+      <input type="text" name="name" placeholder="New name" required>
+      <button type="submit" class="btn-sm accent">Add person</button>
+    </form>
+    <p class="hint" style="margin-top:10px;">Renaming someone also renames them on every past entry. Deactivate to drop them from the dropdown (past entries keep the name).</p>
+  </div>
+</div>
+{% endfor %}
+
+<div class="toast" id="toast" role="status"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+
+  var tabBar = document.getElementById("tabBar");
+  function activateTab(key) {
+    var btn = tabBar.querySelector('.tab-btn[data-tab="' + key + '"]');
+    var panel = document.querySelector('.tab-panel[data-panel="' + key + '"]');
+    if (!btn || !panel) return;
+    document.querySelectorAll(".tab-btn, .tab-panel").forEach(function (el) { el.classList.remove("active"); });
+    btn.classList.add("active"); panel.classList.add("active");
+  }
+  tabBar.addEventListener("click", function (e) {
+    var btn = e.target.closest(".tab-btn");
+    if (!btn) return;
+    activateTab(btn.dataset.tab);
+    location.hash = btn.dataset.tab;
+  });
+  if (location.hash) activateTab(location.hash.slice(1));
+
+  var toastTimer;
+  function showToast(msg, isError) {
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = "toast"; }, 3000);
+  }
+  function post(url, body) {
+    return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d.ok, data: d }; }); });
+  }
+  function done(res, okMsg) {
+    if (!res.ok) { showToast(res.data.error || "Failed", true); return; }
+    var n = res.data.updated_historical_rows || 0;
+    if (okMsg || n) showToast((okMsg || "Saved.") + (n ? " Updated " + n + " past entr" + (n === 1 ? "y" : "ies") + " too." : ""));
+    setTimeout(function () { location.reload(); }, n ? 900 : 0);
+  }
+
+  // ── Shared row edit / cancel ──
+  document.addEventListener("click", function (e) {
+    var edit = e.target.closest(".row-edit");
+    if (edit) { edit.closest("tr").classList.add("editing"); return; }
+    var cancel = e.target.closest(".row-cancel");
+    if (cancel) {
+      var row = cancel.closest("tr");
+      row.querySelectorAll(".edit-val[data-original]").forEach(function (input) { input.value = input.dataset.original; });
+      row.classList.remove("editing");
+    }
+  });
+
+  // ── Reasons ──
+  document.getElementById("formNewReason").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var f = e.target;
+    post("/api/hardware/admin/reasons", { reason: f.reason.value.trim(), is_scrap: f.is_scrap.value === "true" }).then(function (res) { done(res); });
+  });
+  document.querySelectorAll(".reason-save").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      var reason = row.querySelector(".reason-field").value.trim();
+      if (!reason) { showToast("Reason is required", true); return; }
+      post("/api/hardware/admin/reasons/" + row.dataset.id, {
+        reason: reason,
+        is_scrap: row.querySelector(".scrap-field").value === "true",
+        sort_order: row.querySelector(".sort-field").value
+      }).then(function (res) { done(res, "Saved."); });
+    });
+  });
+  document.querySelectorAll(".reason-active").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      post("/api/hardware/admin/reasons/" + btn.closest("tr").dataset.id + "/active", { active: btn.dataset.active !== "true" })
+        .then(function (res) { done(res); });
+    });
+  });
+
+  // ── Parts ──
+  function partBody(row) {
+    var body = { old_part_number: row.dataset.part };
+    row.querySelectorAll("input.edit-val").forEach(function (input) { body[input.dataset.field] = input.value.trim(); });
+    return body;
+  }
+  document.querySelectorAll(".part-save").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var body = partBody(btn.closest("tr"));
+      if (!body.part_number) { showToast("Part number is required", true); return; }
+      post("/api/hardware/admin/parts", body).then(function (res) { done(res, "Saved."); });
+    });
+  });
+  document.querySelectorAll(".part-active").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      post("/api/hardware/admin/parts/" + encodeURIComponent(btn.closest("tr").dataset.part) + "/active", { active: btn.dataset.active !== "true" })
+        .then(function (res) { done(res); });
+    });
+  });
+  document.getElementById("formNewPart").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var body = Object.fromEntries(new FormData(e.target));
+    var exists = Array.prototype.some.call(document.querySelectorAll("#partRows tr"), function (tr) {
+      return tr.dataset.part === body.part_number.trim().toUpperCase();
+    });
+    if (exists) { showToast(body.part_number.trim().toUpperCase() + " is already in the list — edit it there.", true); return; }
+    post("/api/hardware/admin/parts", body).then(function (res) { done(res); });
+  });
+  var partSearch = document.getElementById("partSearch");
+  function filterParts() {
+    var q = partSearch.value.trim().toLowerCase(), shown = 0, rows = document.querySelectorAll("#partRows tr");
+    rows.forEach(function (tr) {
+      var match = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+      tr.hidden = !match;
+      if (match) shown++;
+    });
+    document.getElementById("partCount").textContent = shown + " of " + rows.length + " parts";
+  }
+  partSearch.addEventListener("input", filterParts);
+  filterParts();
+
+  // ── People (shared named-list API, same as Doors' Work Centres/People) ──
+  document.querySelectorAll(".named-new").forEach(function (form) {
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      post("/api/admin/" + form.dataset.table, { name: form.querySelector("[name=name]").value.trim() }).then(function (res) { done(res); });
+    });
+  });
+  document.querySelectorAll(".named-save").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = btn.closest("tr");
+      var name = row.querySelector(".name-field").value.trim();
+      if (!name) { showToast("Name is required", true); return; }
+      post("/api/admin/" + btn.dataset.table + "/" + encodeURIComponent(row.dataset.name) + "/save",
+        { name: name, sort_order: row.querySelector(".sort-field").value }).then(function (res) { done(res, "Saved."); });
+    });
+  });
+  document.querySelectorAll(".named-active").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      post("/api/admin/" + btn.dataset.table + "/" + encodeURIComponent(btn.closest("tr").dataset.name) + "/active",
+        { active: btn.dataset.active !== "true" }).then(function (res) { done(res); });
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -94,4 +94,41 @@
   {% endif %}
   {% endif %}
 </div>
+
+<div class="card" id="hardware" style="margin-top:20px;">
+  <h2 style="margin-top:0;">Hardware workbook</h2>
+  <p class="hint">
+    Upload <code>Scrap Rework - Use this one V2.xlsx</code>. Imports the <code>Master Data Sheet</code>
+    into the Hardware PC log, adds any reasons from <code>DATA VALIDATION</code> (column D) and any
+    parts from <code>Data Sheet</code> that aren't already in Hardware admin. Safe to re-upload:
+    rows already imported aren't duplicated, and their progress (status, co-create / pick / complete
+    dates, people, comments) is refreshed from the sheet unless the entry has been edited in this app since.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" class="inline-form" style="margin-top:14px; border-top:none; padding-top:0;">
+    <input type="hidden" name="import_type" value="hardware">
+    <input type="file" name="file" accept=".xlsx" required>
+    <button type="submit" class="btn-sm accent">Import</button>
+  </form>
+
+  {% if hw_error %}
+  <p style="color:var(--crit); margin-top:14px;">{{ hw_error }}</p>
+  {% endif %}
+
+  {% if hw_result %}
+  <div class="admin-grid" style="margin-top:18px;">
+    <div class="stat-tile"><div class="stat-label">Inserted</div><div class="stat-value">{{ hw_result.inserted }}</div></div>
+    <div class="stat-tile"><div class="stat-label">Progress updated</div><div class="stat-value">{{ hw_result.updated }}</div></div>
+    <div class="stat-tile"><div class="stat-label">Already up to date</div><div class="stat-value">{{ hw_result.unchanged }}</div></div>
+    <div class="stat-tile"><div class="stat-label">Skipped (incomplete row)</div><div class="stat-value">{{ hw_result.skipped_invalid }}</div></div>
+    <div class="stat-tile"><div class="stat-label">Reasons / parts / people added</div><div class="stat-value">{{ hw_result.reasons_added }} / {{ hw_result.parts_added }} / {{ hw_result.people_added }}</div></div>
+  </div>
+  {% if hw_result.invalid_examples %}
+  <p class="hint" style="margin-top:12px;">A sample of skipped rows (missing a request date, part or qty):</p>
+  <ul class="hint">
+    {% for ex in hw_result.invalid_examples %}<li>{{ ex }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% endif %}
+</div>
 {% endblock %}

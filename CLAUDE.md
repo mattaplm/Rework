@@ -339,6 +339,12 @@ step, and visiting `/login` while already signed in -- now lands on
 three paths; an explicit `?next=` (e.g. bounced here by `role_required`)
 still takes priority over that default.
 
+**Landing page** (2026-11-11): `/` (`blueprints/pages.py`, `templates/
+landing.html`, login required) is now a department picker -- Doors /
+Hardware cards, same idea as Scheduler's `index.html` -- and every
+post-login redirect lands there instead of `/dashboard`. Both sidebars have
+a Home link back to it (`.nav-home` in `templates/base.html`).
+
 **The login form auto-submits once a 4-digit PIN is typed** (2026-10-22,
 "shouldn't need to click log in") -- `login.html`'s own inline script
 submits the form the moment the PIN field matches `/^\d{4}$/`, as long as a
@@ -538,6 +544,61 @@ brand-new row has nothing to show read-only yet, so it's added already in
 edit mode. Editing a row's code (not just its other fields) acts like a
 rename: `services.admin_data.save_cpq_door_code` deletes the old `cpq_code`
 row first since it's the primary key, rather than leaving both behind.
+
+## Hardware department (2026-11-11)
+
+A second department alongside Doors, replacing the `Master Data Sheet` of
+`Scrap Rework - Use this one V2.xlsx` (the Hardware PC rework/scrap log).
+Same users/roles and colours as Doors; everything else is its own:
+`hw_events`, `hw_reasons`, `hw_parts`, `hw_powdercoaters`, `hw_assemblers`
+(migration `0021` / sqlite `0008`).
+
+- **Shell**: `templates/hw_base.html` extends `base.html`, overriding its
+  `brand` and `nav` blocks -- the Hardware sidebar is PC log, New entry,
+  Import from Excel, Hardware admin.
+- **PC log** (`/hardware/log`, any logged-in role): filters (month, year,
+  status, reason, location, scrap/rework, part, SO/job), totals tiles over
+  the whole filtered set, newest 500 rows shown.
+- **Entry form** (`/hardware/new`, `/hardware/<id>/edit`, operator+): one
+  part line per entry. After a create, request/order/colour/people stay
+  filled and only part + qty clear, since several parts usually come off
+  one job. Reopen an entry to fill in Co-create / Pick / Complete dates.
+- **Rules** (`services/hardware.py` docstring has the sheet formulas they
+  port): Status is derived -- Log Job (no pick date), Open (picked), Closed
+  (completed), or Scrap (the "Straight scrap -- no remake" box; the sheet
+  marked these by typing SCRAP over its Status formula). Scrap vs rework
+  follows the reason (`hw_reasons.is_scrap`, the sheet's DATA VALIDATION
+  column E). Part cost fields are snapshotted from `hw_parts` when saved
+  and kept while the part number doesn't change, so a later price change
+  never rewrites an entry; Scrap cost = unit cost x qty and Material (zinc)
+  scrap cost = material cost x qty, both 0 for a rework reason. A new entry
+  must use a part from the parts list; an old row whose part isn't listed
+  can still be edited.
+- **Hardware admin** (`/hardware/admin`, admin): Reasons (seeded with the 47
+  from DATA VALIDATION column D; Scrap/Rework per reason; rename cascades
+  into past entries, a Scrap/Rework change doesn't), Parts (from the
+  workbook's `Data Sheet`; deactivate to drop from the form), Powdercoat and
+  Assembly people (`admin_data`'s named-table helpers and `/api/admin/<table>`
+  routes, same as Doors' People).
+- **Colour**: picked from the ERP-synced `colours` list, split back into the
+  sheet's two columns -- `hardware.list_colours()` strips the Dulux code
+  suffix off the name ("APPLIANCE WHITE MATT 20S1364M" -> colour
+  "APPLIANCE WHITE MATT", code "20S1364M"). Free text is still accepted.
+- **Import** (`services/hardware_import.py`, Import from Excel's Hardware
+  card, or `python import_hardware_log.py <xlsx>`): Master Data Sheet ->
+  log, Data Sheet -> parts (added only if new; admin owns them after), DATA
+  VALIDATION D/E -> reasons (added only if new). Dedup hashes only the
+  columns set when a row is entered (SO, job, part, qty, colour, location,
+  request date, reason), because the sheet keeps changing a row as the
+  remake progresses -- a re-upload refreshes progress (status, dates,
+  people, comments) on rows already imported, unless the row has been
+  edited in this app since (`updated_at` set). Confirmed against the real
+  workbook: 20,430 rows imported, 71 skipped for a missing request date /
+  part / qty, 320 parts, and a second upload changes nothing. Powdercoat/
+  Assembly names used at least 3 times (combined entries like
+  "IMTIYAAZ/AMZ" split) seed the people lists; rows keep the sheet's text.
+- Not built yet: a Hardware dashboard (the workbook's many pivot/report
+  tabs), and ERP lookups (SO/job auto-fill, SyteLine scrap reconciliation).
 
 ## Where to look for changes
 

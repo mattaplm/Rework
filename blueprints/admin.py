@@ -272,7 +272,7 @@ def api_update_reason(reason_id: int):
 
 # ── Work centres ─────────────────────────────────────────────────────────
 
-@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations):table>", methods=["POST"])
+@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations,hw_powdercoaters,hw_assemblers):table>", methods=["POST"])
 @role_required("admin")
 def api_create_named(table: str):
     data = request.get_json(force=True, silent=True) or {}
@@ -289,7 +289,7 @@ def api_create_named(table: str):
     return jsonify({"ok": True})
 
 
-@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations):table>/<path:name>/active", methods=["POST"])
+@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations,hw_powdercoaters,hw_assemblers):table>/<path:name>/active", methods=["POST"])
 @role_required("admin")
 def api_set_named_active(table: str, name: str):
     active = bool((request.get_json(force=True, silent=True) or {}).get("active", True))
@@ -298,7 +298,7 @@ def api_set_named_active(table: str, name: str):
     return jsonify({"ok": True})
 
 
-@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations):table>/<path:name>/save", methods=["POST"])
+@bp.route("/api/admin/<any(work_centres,people,turret_open_options,turret_variations,hw_powdercoaters,hw_assemblers):table>/<path:name>/save", methods=["POST"])
 @role_required("admin")
 def api_save_named(table: str, name: str):
     data = request.get_json(force=True, silent=True) or {}

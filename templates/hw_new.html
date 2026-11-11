@@ -1,0 +1,372 @@
+{% extends "hw_base.html" %}
+{% block title %}{{ "Edit entry" if event else "New entry" }} · Hardware Rework{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ "✏️ Edit entry" if event else "➕ New entry" }}</h1>
+  {% if event %}<a href="{{ url_for('hardware.log_page') }}" class="btn-text">Back to the PC log</a>{% endif %}
+</div>
+
+<div class="layout">
+  <form class="form-col" id="hwForm" novalidate>
+
+    <div class="card">
+      <h2>Request</h2>
+      <div class="row3">
+        <div class="field" id="requestDateField">
+          <label for="requestDate">Request date <span class="required-mark">*</span></label>
+          <input type="date" id="requestDate" max="{{ today }}" value="{{ today }}">
+          <p class="field-error" data-default="Required.">Required.</p>
+        </div>
+        <div class="field" id="locationField">
+          <label for="location">Location <span class="required-mark">*</span></label>
+          <select id="location">
+            <option value="">Select…</option>
+            {% for l in locations %}<option value="{{ l }}">{{ l }}</option>{% endfor %}
+          </select>
+          <p class="field-error">Required.</p>
+        </div>
+        <div class="field" id="reasonField">
+          <label for="reasonInput">Reason <span class="required-mark">*</span></label>
+          <div class="combo">
+            <input type="text" id="reasonInput" placeholder="Search reasons…" autocomplete="off">
+            <ul class="combo-list" id="reasonList" hidden></ul>
+          </div>
+          <p class="field-error">Pick a reason from the list.</p>
+        </div>
+      </div>
+      <p class="hint" id="reasonHint">The reason decides whether the parts are scrapped or reworked.</p>
+    </div>
+
+    <div class="card">
+      <h2>Order <span class="optional">optional</span></h2>
+      <div class="row2">
+        <div class="field">
+          <label for="soNumber">SO number</label>
+          <input type="text" id="soNumber" autocomplete="off" placeholder="e.g. 495453">
+        </div>
+        <div class="field">
+          <label for="jobNumber">Job number</label>
+          <input type="text" id="jobNumber" autocomplete="off" placeholder="J00…">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Part</h2>
+      <div class="row2">
+        <div class="field" id="partField">
+          <label for="partInput">Part number <span class="required-mark">*</span></label>
+          <div class="combo">
+            <input type="text" id="partInput" placeholder="Start typing a part number…" autocomplete="off">
+            <ul class="combo-list" id="partList" hidden></ul>
+          </div>
+          <p class="field-error">Pick a part from the list.</p>
+        </div>
+        <div class="field" id="quantityField">
+          <label for="quantity">Qty <span class="required-mark">*</span></label>
+          <input type="number" id="quantity" min="1" step="1" inputmode="numeric" placeholder="—">
+          <p class="field-error">Must be 1 or more.</p>
+        </div>
+      </div>
+      <p class="hint" id="partHint">Costs come from the parts list in Hardware admin.</p>
+    </div>
+
+    <div class="card">
+      <h2>Colour</h2>
+      <div class="row2">
+        <div class="field" id="colourField">
+          <label for="colourInput">Colour <span class="required-mark">*</span></label>
+          <div class="combo">
+            <input type="text" id="colourInput" placeholder="Search colours…" autocomplete="off">
+            <ul class="combo-list" id="colourList" hidden></ul>
+          </div>
+          <p class="field-error">Required.</p>
+        </div>
+        <div class="field">
+          <label for="colourCode">Colour code</label>
+          <input type="text" id="colourCode" autocomplete="off" placeholder="Filled in from the colour">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>People <span class="optional">optional</span></h2>
+      <div class="row2">
+        <div class="field">
+          <label for="powdercoater">Powdercoat</label>
+          <select id="powdercoater">
+            <option value="">—</option>
+            {% for p in powdercoaters %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="assembler">Assembly</label>
+          <select id="assembler">
+            <option value="">—</option>
+            {% for a in assemblers %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Progress <span class="optional">fill these in as the remake moves along</span></h2>
+      <div class="row3">
+        <div class="field" id="cocreateDateField">
+          <label for="cocreateDate">Co-create date</label>
+          <input type="date" id="cocreateDate" max="{{ today }}">
+          <p class="field-error"></p>
+        </div>
+        <div class="field" id="pickDateField">
+          <label for="pickDate">Pick date</label>
+          <input type="date" id="pickDate" max="{{ today }}">
+          <p class="field-error"></p>
+        </div>
+        <div class="field" id="completeDateField">
+          <label for="completeDate">Complete date</label>
+          <input type="date" id="completeDate" max="{{ today }}">
+          <p class="field-error"></p>
+        </div>
+      </div>
+      <label class="check-row" style="margin-top:4px;">
+        <input type="checkbox" id="scrapOnly"> Straight scrap — no remake job
+      </label>
+    </div>
+
+    <div class="card">
+      <h2>Comments <span class="optional">optional</span></h2>
+      <textarea id="comments" placeholder="e.g. not jigged properly"></textarea>
+    </div>
+  </form>
+
+  <aside class="summary-col">
+    <div class="card summary-card">
+      <h2>Summary</h2>
+      <div class="sumrow"><span>Status</span><strong id="sumStatus">Log Job</strong></div>
+      <div class="sumrow"><span>Scrap / rework</span><strong id="sumScrap">—</strong></div>
+      <div class="sumrow"><span>Unit cost</span><strong id="sumUnit">—</strong></div>
+      <div class="sumrow"><span>Material (zinc) scrap cost</span><strong id="sumMaterial">—</strong></div>
+      <div class="sumrow total"><span>Scrap cost</span><strong id="sumTotal">—</strong></div>
+      <p class="hint">Scrapped parts cost unit cost × qty; reworked parts cost nothing here. Recalculated on save.</p>
+      <button type="submit" form="hwForm" class="btn-primary" id="submitBtn">{{ "Save changes" if event else "Log entry" }}</button>
+    </div>
+  </aside>
+</div>
+
+<div class="mobile-bar">
+  <div class="mb-total"><span>Scrap cost</span><strong id="sumTotalMobile">—</strong></div>
+  <button type="submit" form="hwForm" class="btn-primary">{{ "Save changes" if event else "Log entry" }}</button>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+
+  var EVENT = {{ event|tojson }};
+  var REASONS = {{ reasons|tojson }};
+  var PARTS = {{ parts|tojson }};
+  var COLOURS = {{ colours|tojson }};
+  var TODAY = {{ today|tojson }};
+
+  var $ = function (id) { return document.getElementById(id); };
+  var form = $("hwForm");
+
+  function findReason(text) {
+    var t = (text || "").trim().toUpperCase();
+    return REASONS.find(function (r) { return r.reason.toUpperCase() === t; }) || null;
+  }
+  function findPart(text) {
+    var t = (text || "").trim().toUpperCase();
+    return PARTS.find(function (p) { return p.part_number.toUpperCase() === t; }) || null;
+  }
+
+  makeCombo($("reasonInput"), $("reasonList"), REASONS,
+    function (r) { return r.reason; },
+    function (r) { return r.is_scrap ? "Scrap" : "Rework"; },
+    function (r) { $("reasonInput").value = r.reason; render(); });
+
+  makeCombo($("partInput"), $("partList"), PARTS,
+    function (p) { return p.part_number; },
+    function (p) { return [p.product_code, p.material, p.unit_cost != null ? nzd(p.unit_cost) : null].filter(Boolean).join(" · "); },
+    function (p) { $("partInput").value = p.part_number; render(); });
+
+  makeCombo($("colourInput"), $("colourList"), COLOURS,
+    function (c) { return c.colour; },
+    function (c) { return c.code || ""; },
+    function (c) { $("colourInput").value = c.colour; $("colourCode").value = c.code || ""; render(); });
+
+  // Historical values that aren't in today's dropdowns (e.g. "IMTIYAAZ/AMZ")
+  // are added as an option so editing an old row never silently drops them.
+  function setSelect(sel, value) {
+    if (value && !Array.prototype.some.call(sel.options, function (o) { return o.value === value; })) {
+      var opt = document.createElement("option");
+      opt.value = value; opt.textContent = value;
+      sel.appendChild(opt);
+    }
+    sel.value = value || "";
+  }
+
+  function status() {
+    if ($("scrapOnly").checked) return "Scrap";
+    if ($("completeDate").value) return "Closed";
+    if ($("pickDate").value) return "Open";
+    return "Log Job";
+  }
+
+  function render() {
+    var reason = findReason($("reasonInput").value);
+    var part = findPart($("partInput").value);
+    var qty = parseInt($("quantity").value, 10) || 0;
+    var unchangedPart = EVENT && EVENT.part_number === ($("partInput").value || "").trim().toUpperCase();
+    var isScrap = reason ? reason.is_scrap : (EVENT && EVENT.reason === $("reasonInput").value ? EVENT.is_scrap : null);
+
+    $("reasonHint").textContent = reason
+      ? (reason.is_scrap ? "Scrap reason — the parts are written off and costed." : "Rework reason — the parts are reworked, no scrap cost.")
+      : "The reason decides whether the parts are scrapped or reworked.";
+
+    var unit = unchangedPart && EVENT.unit_cost != null ? EVENT.unit_cost : (part ? part.unit_cost : null);
+    var material = unchangedPart && EVENT.material_cost != null ? EVENT.material_cost : (part ? part.material_cost : null);
+    if (part) {
+      $("partHint").textContent = [part.product_code, part.material, part.supplier].filter(Boolean).join(" · ") || "No product details on this part.";
+    } else {
+      $("partHint").textContent = unchangedPart ? "This part isn't in the parts list — its logged costs are kept." : "Costs come from the parts list in Hardware admin.";
+    }
+
+    $("sumStatus").textContent = status();
+    $("sumScrap").textContent = isScrap == null ? "—" : (isScrap ? "Scrap " + qty : "Rework " + qty);
+    $("sumUnit").textContent = unit != null ? nzd(unit) : "—";
+    var total = unit != null && isScrap != null && qty ? (isScrap ? unit * qty : 0) : null;
+    var mat = material != null && isScrap != null && qty ? (isScrap ? material * qty : 0) : null;
+    $("sumMaterial").textContent = mat != null ? nzd(mat) : "—";
+    $("sumTotal").textContent = $("sumTotalMobile").textContent = total != null ? nzd(total) : "—";
+  }
+
+  ["quantity", "pickDate", "completeDate", "scrapOnly", "reasonInput", "partInput"].forEach(function (id) {
+    $(id).addEventListener("input", render);
+    $(id).addEventListener("change", render);
+  });
+
+  function setInvalid(fieldId, message) {
+    var field = $(fieldId);
+    if (!field) return;
+    field.classList.add("invalid");
+    var err = field.querySelector(".field-error");
+    if (err && message) err.textContent = message;
+  }
+
+  function validate() {
+    document.querySelectorAll(".field.invalid").forEach(function (f) { f.classList.remove("invalid"); });
+    var ok = true;
+    function bad(id, msg) { setInvalid(id, msg); ok = false; }
+    if (!$("requestDate").value) bad("requestDateField", "Required.");
+    else if ($("requestDate").value > TODAY) bad("requestDateField", "Can't be in the future.");
+    if (!$("location").value) bad("locationField");
+    var reasonText = $("reasonInput").value.trim();
+    if (!findReason(reasonText) && !(EVENT && EVENT.reason === reasonText && reasonText)) bad("reasonField");
+    var partText = $("partInput").value.trim().toUpperCase();
+    if (!findPart(partText) && !(EVENT && EVENT.part_number === partText && partText)) bad("partField");
+    if (!(parseInt($("quantity").value, 10) >= 1)) bad("quantityField");
+    if (!$("colourInput").value.trim()) bad("colourField");
+    ["cocreateDate", "pickDate", "completeDate"].forEach(function (id) {
+      if ($(id).value && $(id).value > TODAY) bad(id + "Field", "Can't be in the future.");
+    });
+    if ($("pickDate").value && $("completeDate").value && $("completeDate").value < $("pickDate").value) {
+      bad("completeDateField", "Can't be before the pick date.");
+    }
+    return ok;
+  }
+
+  function payload() {
+    var reason = findReason($("reasonInput").value);
+    return {
+      request_date: $("requestDate").value,
+      location: $("location").value,
+      reason: reason ? reason.reason : $("reasonInput").value.trim(),
+      so_number: $("soNumber").value.trim(),
+      job_number: $("jobNumber").value.trim(),
+      part_number: $("partInput").value.trim().toUpperCase(),
+      quantity: $("quantity").value,
+      colour: $("colourInput").value.trim(),
+      colour_code: $("colourCode").value.trim(),
+      powdercoater: $("powdercoater").value,
+      assembler: $("assembler").value,
+      cocreate_date: $("cocreateDate").value,
+      pick_date: $("pickDate").value,
+      complete_date: $("completeDate").value,
+      scrap_only: $("scrapOnly").checked,
+      comments: $("comments").value.trim()
+    };
+  }
+
+  var FIELD_FOR = {
+    request_date: "requestDateField", location: "locationField", reason: "reasonField",
+    part_number: "partField", quantity: "quantityField", colour: "colourField",
+    cocreate_date: "cocreateDateField", pick_date: "pickDateField", complete_date: "completeDateField"
+  };
+
+  var saving = false;
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (saving) return;
+    if (!validate()) { showToast("Check the highlighted fields.", true); return; }
+    saving = true;
+    document.querySelectorAll('button[type="submit"]').forEach(function (b) { b.disabled = true; });
+    var url = EVENT ? "/api/hardware/events/" + EVENT.id : "/api/hardware/events";
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d.ok, data: d }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          Object.keys(res.data.errors || {}).forEach(function (k) { setInvalid(FIELD_FOR[k], res.data.errors[k]); });
+          showToast(res.data.error || "Not saved — check the highlighted fields.", true);
+          return;
+        }
+        if (EVENT) { location.href = "{{ url_for('hardware.log_page') }}"; return; }
+        // Several parts usually come off the same job: keep the request,
+        // order, colour and people, clear just the part and qty.
+        $("partInput").value = ""; $("quantity").value = "";
+        render();
+        $("partInput").focus();
+        showToast("Logged " + res.data.event.part_number + " × " + res.data.event.quantity + ". Add the next part, or carry on.");
+      })
+      .catch(function () { showToast("Couldn't reach the server — not saved.", true); })
+      .finally(function () {
+        saving = false;
+        document.querySelectorAll('button[type="submit"]').forEach(function (b) { b.disabled = false; });
+      });
+  });
+
+  var toastTimer;
+  function showToast(msg, isError) {
+    var t = $("toast");
+    t.textContent = msg;
+    t.className = "toast show" + (isError ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = "toast"; }, 3500);
+  }
+
+  if (EVENT) {
+    $("requestDate").value = EVENT.request_date || "";
+    setSelect($("location"), EVENT.location);
+    $("reasonInput").value = EVENT.reason || "";
+    $("soNumber").value = EVENT.so_number || "";
+    $("jobNumber").value = EVENT.job_number || "";
+    $("partInput").value = EVENT.part_number || "";
+    $("quantity").value = EVENT.quantity || "";
+    $("colourInput").value = EVENT.colour || "";
+    $("colourCode").value = EVENT.colour_code || "";
+    setSelect($("powdercoater"), EVENT.powdercoater);
+    setSelect($("assembler"), EVENT.assembler);
+    $("cocreateDate").value = EVENT.cocreate_date || "";
+    $("pickDate").value = EVENT.pick_date || "";
+    $("completeDate").value = EVENT.complete_date || "";
+    $("scrapOnly").checked = EVENT.status === "Scrap";
+    $("comments").value = EVENT.comments || "";
+  }
+  render();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rework &amp; Scrap</title>
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="landing-body">
+  <main class="landing">
+    <div class="landing-logo" aria-hidden="true">🏭</div>
+    <h1 class="landing-title">Rework &amp; Scrap</h1>
+    <p class="landing-sub">Select a department to get started</p>
+
+    <div class="landing-cards">
+      <a href="{{ url_for('dashboard.dashboard_page') }}" class="landing-card">
+        <div class="landing-card-icon" aria-hidden="true">🚪</div>
+        <div class="landing-card-title">Doors</div>
+        <div class="landing-card-desc">Rework log, turret log, dashboard</div>
+        <div class="landing-card-arrow">Open →</div>
+      </a>
+      <a href="{{ url_for('hardware.log_page') }}" class="landing-card">
+        <div class="landing-card-icon" aria-hidden="true">🔧</div>
+        <div class="landing-card-title">Hardware</div>
+        <div class="landing-card-desc">PC rework &amp; scrap log</div>
+        <div class="landing-card-arrow">Open →</div>
+      </a>
+    </div>
+
+    {% if current_user %}
+    <form method="post" action="{{ url_for('auth.logout') }}" class="landing-user">
+      Signed in as <strong>{{ current_user.username }}</strong> ·
+      <button type="submit" class="btn-text">Log out</button>
+    </form>
+    {% endif %}
+  </main>
+</body>
+</html>

@@ -357,7 +357,7 @@ def test_operator_without_pin_rename_and_admin_guard(sqlite_store, monkeypatch):
     assert client.post(f"/api/users/{uid}/rename", json={"username": "Logan"}).status_code == 200
     client.post("/logout")
     response = client.post("/login", data={"username": "Logan", "password": ""})
-    assert response.status_code == 302 and response.location.endswith("/dashboard")
+    assert response.status_code == 302 and response.location.endswith("/")
     assert client.get("/rework/new").status_code == 200  # operator-level page
 
 
@@ -392,3 +392,126 @@ def test_cost_rates_defaults_save_and_validation(sqlite_store):
         with pytest.raises(ValueError):
             admin_data.set_cost_rates({"cost_pc_flightbar_rate": bad})
     assert admin_data.get_cost_rate("cost_pc_flightbar_rate") == 72.0
+
+
+# ── Hardware ────────────────────────────────────────────────────────────────
+
+from datetime import datetime  # noqa: E402
+
+from services import hardware, hardware_admin, hardware_import  # noqa: E402
+
+
+def hw_payload(**overrides):
+    return {"request_date": "2026-03-02", "location": "PC", "reason": "PITTING", "part_number": "9800865c",
+            "quantity": 3, "colour": "BLACK MATT", "colour_code": "20S9041M", **overrides}
+
+
+def test_hardware_entry_costing_status_and_snapshot(sqlite_store):
+    # Reasons are seeded from the workbook's DATA VALIDATION column D/E by the migration.
+    assert len(hardware.list_reasons()) == 47
+    assert hardware.get_reason("MISSING")["is_scrap"] is False
+    hardware_admin.save_part(None, {"part_number": "9800865C", "unit_cost": "2.01", "material_cost": "1.5",
+                                    "product_code": "ct", "material": "Zinc", "supplier": "APLM"})
+
+    event = hardware.create_event(hw_payload(), None)
+    assert (event["status"], event["is_scrap"], float(event["scrap_cost"]), float(event["material_scrap_cost"])) == ("Log Job", True, 6.03, 4.5)
+    assert (event["part_number"], event["product_code"]) == ("9800865C", "CT")
+
+    hardware_admin.save_part("9800865C", {"part_number": "9800865C", "unit_cost": "10"})  # later price change
+    event = hardware.update_event(event["id"], hw_payload(pick_date="2026-03-03"))
+    assert event["status"] == "Open" and float(event["scrap_cost"]) == 6.03  # snapshot kept
+    event = hardware.update_event(event["id"], hw_payload(pick_date="2026-03-03", complete_date="2026-03-04", reason="MISSING"))
+    assert (event["status"], event["is_scrap"], float(event["scrap_cost"])) == ("Closed", False, 0)
+    assert hardware.update_event(event["id"], hw_payload(scrap_only=True))["status"] == "Scrap"
+
+    for bad, field in ((hw_payload(part_number="NOPE"), "part_number"),
+                       (hw_payload(request_date="2999-01-01"), "request_date"),
+                       (hw_payload(pick_date="2026-03-05", complete_date="2026-03-04"), "complete_date"),
+                       (hw_payload(quantity=0), "quantity"), (hw_payload(location="X"), "location")):
+        with pytest.raises(hardware.ValidationError) as err:
+            hardware.create_event(bad, None)
+        assert field in err.value.errors
+    assert hardware.summary({"scrap": "yes"})["entries"] == 1
+    assert hardware.summary({"q": "nothing"})["entries"] == 0
+
+
+def _hardware_workbook(path, rows):
+    wb = openpyxl.Workbook()
+    master = wb.active
+    master.title = "Master Data Sheet"
+    master.append(["Open/Close:", "Sale Order:", "Job Number", "Parts Required:", "QTY:", "Colour:", "Colour Code:",
+                   "Location:", "Request Date:", "Co-Create Date:", "Pick Date:", "Complete Date: ", "Reason:",
+                   "Scrap Y/N", "Powdercoat ", "Comments", " Assembly", "Product Code", "Material", "Unit Cost",
+                   "Total Cost Scrap", "Material Cost", "Total ZINC Scrap Cost", "Supplier"])
+    for row in rows:
+        master.append(row)
+    parts = wb.create_sheet("Data Sheet")
+    parts.append(["PART NUMBER", "COST PER UNIT", "SUPPLIER", "PRODUCT", "Material", "Material Cost Per Unit"])
+    parts.append([9064080, 5.96, "APLM", "HG", "ALI ", None])
+    parts.append([9064080, 99, "DUPLICATE", "HG", "Ali", None])
+    reasons = wb.create_sheet("DATA VALIDATION")
+    reasons.append(["", "", "", "TYPE", "YES/NO"])
+    reasons.append(["", "", "", "BRAND NEW REASON", "No"])
+    wb.save(path)
+
+
+def test_hardware_import_refreshes_progress_until_edited_in_app(sqlite_store):
+    d = datetime(2025, 4, 29)
+    row = ["Log Job", 495453, None, 9064080, 2, "APPLIANCE WHITE MATT", None, "AH\t", d, None, None, None,
+           "ASSEMBLY ERROR", "Yes", "BRIEN", None, "DAPHNE", "HG", "Ali", 5.96, 11.92, 0, 0, "APLM"]
+    no_date = ["SCRAP", None, None, "9800867C", 1, "BLACK", None, "PC", None, None, None, None, "PITTING", "Yes"]
+    path = sqlite_store / "hw.xlsx"
+    _hardware_workbook(path, [row, row, no_date])
+
+    result = hardware_import.import_workbook(str(path))
+    assert (result.inserted, result.skipped_invalid, result.parts_added, result.reasons_added) == (2, 1, 1, 1)
+    assert hardware.get_part("9064080")["material"] == "Ali" and hardware.get_part("9064080")["unit_cost"] == 5.96
+    events = hardware.list_events({})
+    assert events[0]["location"] == "AH" and float(events[0]["scrap_cost"]) == 11.92 and events[0]["so_number"] == "495453"
+
+    # Progress filled in later in the sheet -> refreshed on re-upload, not duplicated.
+    closed = row[:]
+    closed[0], closed[10], closed[11] = "Closed", datetime(2025, 4, 30), datetime(2025, 5, 1)
+    _hardware_workbook(path, [closed, row, no_date])
+    result = hardware_import.import_workbook(str(path))
+    assert (result.inserted, result.updated, result.unchanged) == (0, 1, 1)
+    assert sorted(e["status"] for e in hardware.list_events({})) == ["Closed", "Log Job"]
+
+    # Once edited in the app, the app's version wins over the sheet.
+    open_row = next(e for e in hardware.list_events({}) if e["status"] == "Log Job")
+    hardware.update_event(open_row["id"], {**hardware.event_json(open_row), "pick_date": "2025-05-02"})
+    _hardware_workbook(path, [row, row, no_date])
+    result = hardware_import.import_workbook(str(path))
+    assert hardware.get_event(open_row["id"])["status"] == "Open"
+    assert result.inserted == 0
+
+
+def test_hardware_pages_and_admin_api(sqlite_store, monkeypatch):
+    monkeypatch.setattr(scheduled_sync, "start_background_thread", lambda: None)
+    from app import create_app
+    client = create_app().test_client()
+    assert client.get("/").status_code == 302  # landing page needs a login
+    client.post("/login", data={"username": "admin", "password": "6543"})
+    client.post("/change-password", data={"new_password": "5678", "confirm": "5678"})
+    landing = client.get("/")
+    assert landing.status_code == 200 and "Hardware" in landing.get_data(as_text=True)
+    assert client.post("/api/hardware/admin/parts", json={"part_number": "p1", "unit_cost": "2"}).status_code == 200
+    assert client.post("/api/hardware/admin/parts", json={"part_number": "p2", "unit_cost": "-1"}).status_code == 400
+    assert client.post("/api/hardware/admin/reasons", json={"reason": "NEW ONE", "is_scrap": False}).status_code == 200
+    assert client.post("/api/hardware/admin/reasons", json={"reason": "NEW ONE"}).status_code == 400  # duplicate
+    assert client.post("/api/admin/hw_powdercoaters", json={"name": "BRIEN"}).status_code == 200
+    created = client.post("/api/hardware/events", json=hw_payload(part_number="P1", powdercoater="BRIEN"))
+    assert created.status_code == 200
+    event_id = created.get_json()["event"]["id"]
+    assert client.post("/api/hardware/events", json={}).get_json()["errors"]["part_number"] == "Required."
+    updated = client.post(f"/api/hardware/events/{event_id}", json=hw_payload(part_number="P1", pick_date="2026-03-03", powdercoater="BRIEN"))
+    assert updated.get_json()["event"]["status"] == "Open"
+    renamed = client.post("/api/admin/hw_powdercoaters/BRIEN/save", json={"name": "Brien", "sort_order": 1})
+    assert renamed.get_json()["updated_historical_rows"] == 1
+    reason_id = next(r["id"] for r in hardware.list_reasons() if r["reason"] == "PITTING")
+    saved = client.post(f"/api/hardware/admin/reasons/{reason_id}", json={"reason": "PITTED", "is_scrap": True, "sort_order": 3})
+    assert saved.get_json()["updated_historical_rows"] == 1
+    for path in ("/hardware", "/hardware/log", "/hardware/log?year=2026&status=Open&scrap=yes&q=SO&part=P",
+                 "/hardware/new", f"/hardware/{event_id}/edit", "/hardware/admin", "/import", "/dashboard"):
+        assert client.get(path, follow_redirects=True).status_code == 200, path
+    assert "PITTED" in client.get("/hardware/log").get_data(as_text=True)

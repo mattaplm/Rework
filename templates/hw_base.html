@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Hardware Rework{% endblock %}
+
+{% block brand %}
+<div class="brand-mark">HW</div>
+<div>
+  <div class="app-name">Hardware Rework</div>
+  <div class="app-sub">PC rework &amp; scrap log</div>
+</div>
+{% endblock %}
+
+{% block nav %}
+<div class="nav-label">Log</div>
+<a href="{{ url_for('hardware.log_page') }}" class="nav-link {% if active == 'hw_log' %}active{% endif %}">
+  <span class="nav-icon">📋</span> PC log
+</a>
+{% if current_user and current_user.role in ('operator', 'admin') %}
+<a href="{{ url_for('hardware.new_page') }}" class="nav-link {% if active == 'hw_new' %}active{% endif %}">
+  <span class="nav-icon">➕</span> New entry
+</a>
+{% endif %}
+
+{% if current_user and current_user.role == 'admin' %}
+<div class="nav-label" style="margin-top:12px;">System</div>
+<a href="{{ url_for('import_excel.import_page') }}#hardware" class="nav-link">
+  <span class="nav-icon">📥</span> Import from Excel
+</a>
+<a href="{{ url_for('hardware.admin_page') }}" class="nav-link {% if active == 'hw_admin' %}active{% endif %}">
+  <span class="nav-icon">⚙️</span> Hardware admin
+</a>
+{% endif %}
+{% endblock %}

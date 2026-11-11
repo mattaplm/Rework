@@ -15,15 +15,18 @@
   <nav class="sidebar">
     <div class="sidebar-brand">
       <div class="brand-row">
+        {% block brand %}
         <div class="brand-mark">DR</div>
         <div>
           <div class="app-name">Doors Rework</div>
           <div class="app-sub">Rework &amp; scrap log</div>
         </div>
+        {% endblock %}
       </div>
     </div>
 
     <div class="nav-section">
+      {% block nav %}
       <div class="nav-label">Overview</div>
       <a href="{{ url_for('dashboard.dashboard_page') }}" class="nav-link {% if active == 'dashboard' %}active{% endif %}">
         <span class="nav-icon">📊</span> Dashboard
@@ -60,6 +63,7 @@
         <span class="nav-icon">⚙️</span> Admin
       </a>
       {% endif %}
+      {% endblock %}
     </div>
 
     <div class="sidebar-footer">
@@ -81,6 +85,7 @@
         </div>
       </div>
       {% if current_user %}
+        <a href="/" class="nav-home"><span class="nav-icon">🏠</span> Home</a>
         <div class="user-box">
           <span class="avatar">{{ current_user.username[:2]|upper }}</span>
           <div class="user-box-text">

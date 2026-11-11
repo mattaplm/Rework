@@ -13,10 +13,11 @@ import sqlite3
 
 
 _DATES = {"entered_date", "rework_date", "due_date", "event_date", "txn_date",
-          "scrap_date_a", "scrap_date_b", "scrap_date_c", "write_off_date"}
+          "scrap_date_a", "scrap_date_b", "scrap_date_c", "write_off_date",
+          "request_date", "cocreate_date", "pick_date", "complete_date"}
 _TIMES = {"created_at", "updated_at", "synced_at", "last_login_at",
           "last_seen_at", "at", "t", "last_synced", "applied_at"}
-_BOOLEANS = {"active", "must_change_password", "includes_test_data"}
+_BOOLEANS = {"active", "must_change_password", "includes_test_data", "is_scrap"}
 
 
 def _bind(value):

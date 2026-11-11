@@ -17,7 +17,7 @@ import tempfile
 
 from flask import Blueprint, render_template, request
 
-from services import rework_import, turret_import
+from services import hardware_import, rework_import, turret_import
 from services.auth import role_required
 
 bp = Blueprint("import_excel", __name__)
@@ -30,6 +30,8 @@ def import_page():
     error = None
     turret_result = None
     turret_error = None
+    hw_result = None
+    hw_error = None
 
     if request.method == "POST":
         import_type = request.form.get("import_type", "rework")
@@ -38,12 +40,16 @@ def import_page():
             err_msg = "Choose a .xlsx file first."
             if import_type == "turret":
                 turret_error = err_msg
+            elif import_type == "hardware":
+                hw_error = err_msg
             else:
                 error = err_msg
         elif not file.filename.lower().endswith(".xlsx"):
             err_msg = "Must be a .xlsx file."
             if import_type == "turret":
                 turret_error = err_msg
+            elif import_type == "hardware":
+                hw_error = err_msg
             else:
                 error = err_msg
         else:
@@ -51,7 +57,12 @@ def import_page():
             try:
                 os.close(fd)
                 file.save(tmp_path)
-                if import_type == "turret":
+                if import_type == "hardware":
+                    try:
+                        hw_result = hardware_import.import_workbook(tmp_path)
+                    except KeyError:
+                        hw_error = "Couldn't find a 'Master Data Sheet' tab in that file -- is this the right workbook?"
+                elif import_type == "turret":
                     layout = request.form.get("layout", "current")
                     try:
                         turret_result = turret_import.import_workbook(tmp_path, layout=layout)
@@ -72,4 +83,6 @@ def import_page():
         error=error,
         turret_result=turret_result,
         turret_error=turret_error,
+        hw_result=hw_result,
+        hw_error=hw_error,
     )
